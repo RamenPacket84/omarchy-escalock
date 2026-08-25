@@ -3,6 +3,7 @@ import Quickshell
 import Quickshell.Io
 import qs.Commons
 import qs.Ui
+import "StateModel.js" as StateModel
 
 Panel {
   id: root
@@ -17,10 +18,10 @@ Panel {
 
   readonly property string helper: "/usr/local/libexec/omarchy-admin-toggle-helper"
   readonly property bool busy: statusProcess.running || transitionProcess.running
-  readonly property string icon: adminState === "enabled" ? "󰒃"
-    : (adminState === "disabled" ? "󰌾" : "󰀦")
-  readonly property string stateLabel: adminState === "enabled" ? "Admin ON"
-    : (adminState === "disabled" ? "Admin OFF" : "Admin ?")
+  readonly property string secureModeState: StateModel.secureState(adminState)
+  readonly property string icon: secureModeState === "on" ? "\uf023"
+    : (secureModeState === "off" ? "\uf09c" : "󰀦")
+  readonly property string stateLabel: StateModel.stateLabel(adminState)
   readonly property color foreground: bar ? bar.foreground : Color.foreground
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
 
@@ -40,8 +41,8 @@ Panel {
       return
     }
     statusMessage = adminState === "enabled"
-      ? "Subsequent sudo and generic administrative elevation will be blocked until Administrator Mode is restored."
-      : "The sudo and Polkit state do not agree. No automatic transition will be attempted."
+      ? "Turning Secure Mode on blocks subsequent sudo and generic administrative elevation until you authenticate to turn it off."
+      : "The sudo and Polkit state do not agree. Secure Mode cannot be determined, so no transition will be attempted."
     statusError = adminState !== "enabled"
     open()
   }
@@ -49,8 +50,8 @@ Panel {
   function runTransition(operation) {
     if (busy || (operation !== "enable" && operation !== "disable")) return
     statusMessage = operation === "enable"
-      ? "Waiting for authentication to restore Administrator Mode…"
-      : "Waiting for authentication to disable Administrator Mode…"
+      ? "Waiting for authentication to turn Secure Mode off and restore administrator privileges…"
+      : "Waiting for authentication to turn Secure Mode on…"
     statusError = false
     transitionProcess.operation = operation
     transitionProcess.command = ["/usr/bin/pkexec", helper, operation]
@@ -62,8 +63,7 @@ Panel {
     if (exitCode === 0 && (value === "enabled" || value === "disabled" || value === "inconsistent")) {
       adminState = value
       if (!transitionProcess.running) {
-        statusMessage = value === "enabled" ? "Administrator Mode is ON."
-          : (value === "disabled" ? "Administrator Mode is OFF." : "System authorization state is inconsistent.")
+        statusMessage = StateModel.statusMessage(value)
         statusError = value === "inconsistent"
       }
     } else {
@@ -108,8 +108,8 @@ Panel {
     onExited: function(exitCode) {
       if (exitCode === 0) {
         root.statusMessage = operation === "enable"
-          ? "Administrator Mode restored; verifying…"
-          : "Administrator Mode disabled; verifying…"
+          ? "Secure Mode turned off; verifying administrator access…"
+          : "Secure Mode turned on; verifying restrictions…"
         root.statusError = false
       } else if (exitCode === 126) {
         root.statusMessage = "Authentication canceled. No change was made."
@@ -119,7 +119,7 @@ Panel {
         root.statusError = true
       } else {
         var detail = String(transitionError.text || "").trim()
-        root.statusMessage = detail !== "" ? detail : "Administrator Mode transition failed."
+        root.statusMessage = detail !== "" ? detail : "Secure Mode transition failed."
         root.statusError = true
       }
       root.refreshPending = true
@@ -146,7 +146,7 @@ Panel {
     horizontalMargin: 8.75
     verticalPadding: 8.75
     tooltipText: root.stateLabel + (root.busy ? " · working…" : "")
-      + "\nLeft-click: " + (root.adminState === "enabled" ? "review disable" : "restore")
+      + "\nLeft-click: " + StateModel.actionHint(root.adminState)
       + " · Middle-click: refresh"
 
     onPressed: function(mouseButton) {
@@ -176,9 +176,7 @@ Panel {
 
         Text {
           width: parent.width
-          text: root.adminState === "enabled"
-            ? "Disable administrator privileges?"
-            : (root.adminState === "disabled" ? "Administrator Mode is OFF" : "Administrator state error")
+          text: StateModel.panelTitle(root.adminState)
           textFormat: Text.PlainText
           color: root.foreground
           font.family: root.fontFamily
@@ -206,7 +204,7 @@ Panel {
           Button {
             id: cancelButton
             width: (parent.width - parent.spacing) / 2
-            text: root.adminState === "enabled" ? "Keep ON" : "Close"
+            text: root.adminState === "enabled" ? "Keep OFF" : "Close"
             enabled: !root.busy
             foreground: root.foreground
             onClicked: root.close()
@@ -214,7 +212,7 @@ Panel {
 
           Button {
             width: cancelButton.width
-            text: root.adminState === "enabled" ? "Disable" : "Refresh"
+            text: root.adminState === "enabled" ? "Turn ON" : "Refresh"
             enabled: !root.busy
             foreground: root.foreground
             onClicked: {

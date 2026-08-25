@@ -12,6 +12,9 @@ graphical login. It coordinates two independent authorization systems:
 Separate, narrowly delegated Omarchy sudo rules are outside the project's
 scope and remain installed.
 
+Unless explicitly labeled as Secure Mode, ON and OFF in this technical design
+refer to the helper's internal Administrator Mode state.
+
 ## Fixed trust boundary
 
 The only privileged program exposed by the project is
@@ -68,6 +71,12 @@ template, use fixed absolute paths, perform atomic renames/copies, validate the
 complete sudoers configuration, and verify the final state. A failed disable
 attempt rolls back the sudo grant and OFF rule where possible. A failed enable
 attempt keeps the OFF rule until a valid sudo grant has been restored.
+
+The desktop uses the inverse, novice-facing terminology: authoritative
+`enabled` is displayed as **Secure Mode OFF**, authoritative `disabled` as
+**Secure Mode ON**, and every other combination as **Secure Mode ?**. This is a
+presentation mapping only; helper output, CLI operations, policy action IDs,
+and enforcement semantics remain unchanged.
 
 ## Deliberate limitations
 

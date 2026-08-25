@@ -1,24 +1,25 @@
-# Omarchy Administrator Mode Toggle
+# Omarchy Secure Mode
 
-`andrewbacon.admin-toggle` is an Omarchy 4.x bar widget and local security
-control for one explicitly configured user. It coordinates that user's
-dedicated sudo grant with an early Polkit deny rule so the bar reflects and
-changes real authorization state rather than remembering a cosmetic toggle.
+`andrewbacon.admin-toggle` is an Omarchy 4.x Secure Mode bar widget and local
+security control for one explicitly configured user. It coordinates that
+user's dedicated sudo grant with an early Polkit deny rule so the bar reflects
+and changes real authorization state rather than remembering a cosmetic
+toggle.
 
 This software changes access to root. Review the source, run the dry-run and
-tests, preserve the installer backup, and verify recovery before performing a
-first OFF transition.
+tests, preserve the installer backup, and verify recovery before turning
+Secure Mode on for the first time.
 
 ## Meaning of the two states
 
-Administrator Mode **ON** means:
+Secure Mode **OFF** (Administrator Mode **ON**) means:
 
 - `/etc/sudoers.d/00_USER` is the exact root-owned grant captured at install;
 - the dynamic Admin-OFF Polkit rule is absent; and
 - normal Polkit behavior, including the system's `wheel` administrator rule,
   is allowed to apply.
 
-Administrator Mode **OFF** means:
+Secure Mode **ON** (Administrator Mode **OFF**) means:
 
 - the dedicated general sudo grant is preserved as
   `/etc/omarchy-admin-toggle/sudoers.disabled`, outside `sudoers.d`;
@@ -27,14 +28,17 @@ Administrator Mode **OFF** means:
 - the one early recovery action can still authenticate the active local user
   with `AUTH_SELF` and run only `helper enable`.
 
-OFF does **not** mean that the account has no privileged capabilities at all.
-Separate, narrowly scoped Omarchy sudo rules are intentionally retained. On
-the test system these include delegated DNS, time-zone, and display-control
-operations. OFF removes general-purpose sudo and generic Polkit/root elevation
-while leaving those explicit system delegations alone.
+Secure Mode ON does **not** mean that the account has no privileged
+capabilities at all. Separate, narrowly scoped Omarchy sudo rules are
+intentionally retained. On the test system these include delegated DNS,
+time-zone, and display-control operations. Secure Mode ON removes
+general-purpose sudo and generic Polkit/root elevation while leaving those
+explicit system delegations alone.
 
 The helper reports `inconsistent` instead of guessing whenever the protected
-files do not form one of the two exact states.
+files do not form one of the two exact states. The desktop deliberately
+presents the inverse security concept: helper `enabled` means `Secure Mode
+OFF`, while helper `disabled` means `Secure Mode ON`.
 
 ## Architecture
 
@@ -46,7 +50,7 @@ Omarchy bar widget or CLI
         `-- /usr/bin/pkexec
                   |
                   +-- ...enable action (AUTH_SELF, recovery)
-                  +-- ...disable action (AUTH_SELF, ON only)
+                  +-- ...disable action (AUTH_SELF, Admin ON only)
                   |
                   `-- root-owned helper {enable|disable}
                               |
@@ -72,7 +76,7 @@ Polkit rules are ordered around the dynamic deny rule:
 
 ```text
 05-omarchy-admin-toggle-recovery.rules  enable -> AUTH_SELF
-10-omarchy-admin-toggle-off.rules       target user -> NO (OFF only)
+10-omarchy-admin-toggle-off.rules       target user -> NO (Admin OFF only)
 20-omarchy-admin-toggle-manage.rules    disable -> AUTH_SELF
 50-default.rules                        normal wheel admin behavior
 ```
@@ -95,7 +99,7 @@ It cannot revoke or contain:
 
 - an already-running root shell or process;
 - a cached capability, open privileged descriptor, or privileged state
-  obtained before switching OFF;
+  obtained before turning Secure Mode on;
 - compromise of root, the kernel, Polkit, sudo, or the helper itself; or
 - privilege-escalation bugs in separately delegated narrow commands.
 
@@ -104,11 +108,12 @@ retain supplementary group credentials, so group removal is not dependable as
 an immediate-session enforcement mechanism. The early Polkit rule instead
 returns the first non-null decision for the configured username.
 
-`AUTH_SELF` recovery is deliberate: the configured user can restore ON using
-their own account password even though the OFF rule prevents them from being
-treated as a Polkit administrator. Anyone who knows that password and controls
-the active local session can therefore restore Administrator Mode; this is a
-recovery property, not a second authentication factor.
+`AUTH_SELF` recovery is deliberate: the configured user can turn Secure Mode
+off and restore Administrator Mode using their own account password even
+though the Admin-OFF rule prevents them from being treated as a Polkit
+administrator. Anyone who knows that password and controls the active local
+session can therefore restore administrator privileges; this is a recovery
+property, not a second authentication factor.
 
 ## Build and test
 
@@ -142,8 +147,8 @@ contents cause a refusal rather than an overwrite.
 
 The installer creates a timestamped root-only backup under
 `/var/backups/omarchy-admin-toggle/`, installs and validates recovery, verifies
-the helper reports `enabled`, and leaves Administrator Mode ON. It never
-performs the first disable.
+the helper reports `enabled`, and leaves Administrator Mode ON—displayed as
+Secure Mode OFF. It never performs the first disable.
 
 If the live Omarchy shell is reachable, place the validated widget on the bar:
 
@@ -167,15 +172,16 @@ The installed files are:
 ```
 
 The `10-...-off.rules` file and `sudoers.disabled` do not exist immediately
-after installation; they appear only in OFF state.
+after installation; they appear only while Secure Mode is ON.
 
 ## Use
 
-The compact widget displays `Admin ON`, `Admin OFF`, or `Admin ?`. It polls the
-helper's authoritative state. ON-to-OFF requires a confirmation panel that
-explains the effect, followed by Polkit authentication. OFF-to-ON immediately
-opens the `AUTH_SELF` recovery authentication. Every result is reread from the
-helper.
+The compact widget displays `Secure Mode ON`, `Secure Mode OFF`, or `Secure
+Mode ?`. It polls the helper's authoritative administrator state and applies
+the inverse mapping described above. Turning Secure Mode on requires a
+confirmation panel that explains the effect, followed by Polkit
+authentication. Turning it off immediately opens the `AUTH_SELF` recovery
+authentication. Every result is reread from the helper.
 
 The same mechanism is available from a terminal:
 
@@ -209,7 +215,7 @@ sudo whoami
 ```
 
 Do not delete the helper, policy, recovery rule, configuration, or sudo
-template while OFF.
+template while Secure Mode is ON.
 
 ## Emergency recovery from a live environment
 
@@ -227,8 +233,9 @@ rm -f /etc/polkit-1/rules.d/10-omarchy-admin-toggle-off.rules
 ```
 
 Replace `00_abacon` only if the root-owned `config` names a different target.
-Do not improvise sudoers contents. Reboot, confirm ON, and investigate why the
-normal recovery path failed before using the toggle again.
+Do not improvise sudoers contents. Reboot, confirm Secure Mode is OFF and
+Administrator Mode is ON, and investigate why the normal recovery path failed
+before using the toggle again.
 
 ## Uninstall
 
@@ -238,10 +245,11 @@ Run as the configured user:
 ./uninstall.sh --user abacon
 ```
 
-If OFF, the uninstaller first uses the normal custom recovery action to restore
-ON. It refuses inconsistent state or an unverified sudo template. After ON and
-full sudoers validation are confirmed, it disables/removes the widget, backs
-up project configuration, removes Polkit/helper/config files, revalidates
+If Secure Mode is ON, the uninstaller first uses the normal custom recovery
+action to turn it off and restore Administrator Mode. It refuses inconsistent
+state or an unverified sudo template. After administrator access and full
+sudoers validation are confirmed, it disables/removes the widget, backs up
+project configuration, removes Polkit/helper/config files, revalidates
 sudoers, and verifies the general grant remains present. It will not report
 success if removing the project would strand the machine without the known
 administrator grant.

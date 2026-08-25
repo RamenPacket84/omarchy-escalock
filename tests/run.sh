@@ -14,6 +14,7 @@ bash -n \
 /usr/share/omarchy/bin/omarchy plugin validate "$project_root/plugin"
 /usr/bin/qmlformat -n "$project_root/plugin/BarWidget.qml" >/dev/null
 node "$project_root/tests/test_rules.js"
+node "$project_root/tests/test_state_model.js"
 "$project_root/tests/test_helper.sh"
 
 if rg -n '(/bin/(ba)?sh|eval[[:space:]]*\(|system[[:space:]]*\(|popen[[:space:]]*\()' \
