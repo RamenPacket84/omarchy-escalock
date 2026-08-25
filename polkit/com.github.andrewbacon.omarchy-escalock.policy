@@ -3,29 +3,29 @@
   "-//freedesktop//DTD polkit Policy Configuration 1.0//EN"
   "http://www.freedesktop.org/software/polkit/policyconfig-1.dtd">
 <policyconfig>
-  <vendor>Omarchy Admin Toggle</vendor>
+  <vendor>EscaLock</vendor>
 
-  <action id="com.github.andrewbacon.omarchy-admin-toggle.enable">
-    <description>Enable Administrator Mode</description>
-    <message>Authentication is required to restore Administrator Mode</message>
+  <action id="com.github.andrewbacon.omarchy-escalock.enable">
+    <description>Turn EscaLock Secure Mode off</description>
+    <message>Authentication is required to restore administrator privileges</message>
     <defaults>
       <allow_any>no</allow_any>
       <allow_inactive>no</allow_inactive>
       <allow_active>no</allow_active>
     </defaults>
-    <annotate key="org.freedesktop.policykit.exec.path">/usr/local/libexec/omarchy-admin-toggle-helper</annotate>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/local/libexec/omarchy-escalock-helper</annotate>
     <annotate key="org.freedesktop.policykit.exec.argv1">enable</annotate>
   </action>
 
-  <action id="com.github.andrewbacon.omarchy-admin-toggle.disable">
-    <description>Disable Administrator Mode</description>
-    <message>Authentication is required to disable Administrator Mode</message>
+  <action id="com.github.andrewbacon.omarchy-escalock.disable">
+    <description>Turn EscaLock Secure Mode on</description>
+    <message>Authentication is required to restrict administrator privileges</message>
     <defaults>
       <allow_any>no</allow_any>
       <allow_inactive>no</allow_inactive>
       <allow_active>no</allow_active>
     </defaults>
-    <annotate key="org.freedesktop.policykit.exec.path">/usr/local/libexec/omarchy-admin-toggle-helper</annotate>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/local/libexec/omarchy-escalock-helper</annotate>
     <annotate key="org.freedesktop.policykit.exec.argv1">disable</annotate>
   </action>
 </policyconfig>

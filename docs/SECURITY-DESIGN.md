@@ -18,7 +18,7 @@ refer to the helper's internal Administrator Mode state.
 ## Fixed trust boundary
 
 The only privileged program exposed by the project is
-`/usr/local/libexec/omarchy-admin-toggle-helper`. It is a compiled, root-owned
+`/usr/local/libexec/omarchy-escalock-helper`. It is a compiled, root-owned
 setuid executable with exactly three accepted arguments: `status`, `enable`,
 and `disable`.
 
@@ -40,9 +40,9 @@ The helper accepts no path, username, command, content, or shell input.
 The installed rules intentionally straddle the dynamic OFF rule:
 
 ```text
-05-omarchy-admin-toggle-recovery.rules  enable action -> AUTH_SELF
-10-omarchy-admin-toggle-off.rules       configured user -> NO (OFF only)
-20-omarchy-admin-toggle-manage.rules    disable action -> AUTH_SELF
+05-omarchy-escalock-recovery.rules  enable action -> AUTH_SELF
+10-omarchy-escalock-off.rules       configured user -> NO (OFF only)
+20-omarchy-escalock-manage.rules    disable action -> AUTH_SELF
 50-default.rules                        wheel -> Polkit administrator
 ```
 
@@ -75,8 +75,11 @@ attempt keeps the OFF rule until a valid sudo grant has been restored.
 The desktop uses the inverse, novice-facing terminology: authoritative
 `enabled` is displayed as **Secure Mode OFF**, authoritative `disabled` as
 **Secure Mode ON**, and every other combination as **Secure Mode ?**. This is a
-presentation mapping only; helper output, CLI operations, policy action IDs,
-and enforcement semantics remain unchanged.
+presentation mapping only for the privileged implementation. The public CLI
+uses `on` and `off`, translating them to the fixed helper operations so the
+command follows the novice-facing Secure Mode terminology. Policy action IDs,
+helper output, and enforcement semantics retain their administrator-state
+meaning.
 
 ## Deliberate limitations
 

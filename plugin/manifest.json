@@ -1,11 +1,11 @@
 {
   "schemaVersion": 1,
-  "id": "andrewbacon.admin-toggle",
-  "name": "Secure Mode",
-  "version": "1.0.1",
+  "id": "andrewbacon.escalock",
+  "name": "EscaLock",
+  "version": "1.1.0",
   "author": "Andrew Bacon",
   "license": "MIT",
-  "description": "Securely control subsequent sudo and Polkit administrator elevation",
+  "description": "Secure Mode for gating subsequent sudo and Polkit administrator elevation",
   "kinds": [
     "bar-widget"
   ],
@@ -13,7 +13,7 @@
     "barWidget": "BarWidget.qml"
   },
   "barWidget": {
-    "displayName": "Secure Mode",
+    "displayName": "EscaLock",
     "description": "Restrict or restore general administrator elevation for the local user",
     "category": "System",
     "allowMultiple": false,

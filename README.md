@@ -1,6 +1,6 @@
-# Omarchy Secure Mode
+# EscaLock for Omarchy
 
-`andrewbacon.admin-toggle` is an Omarchy 4.x Secure Mode bar widget and local
+`andrewbacon.escalock` is an Omarchy 4.x Secure Mode bar widget and local
 security control for one explicitly configured user. It coordinates that
 user's dedicated sudo grant with an early Polkit deny rule so the bar reflects
 and changes real authorization state rather than remembering a cosmetic
@@ -22,8 +22,8 @@ Secure Mode **OFF** (Administrator Mode **ON**) means:
 Secure Mode **ON** (Administrator Mode **OFF**) means:
 
 - the dedicated general sudo grant is preserved as
-  `/etc/omarchy-admin-toggle/sudoers.disabled`, outside `sudoers.d`;
-- `/etc/polkit-1/rules.d/10-omarchy-admin-toggle-off.rules` denies other
+  `/etc/omarchy-escalock/sudoers.disabled`, outside `sudoers.d`;
+- `/etc/polkit-1/rules.d/10-omarchy-escalock-off.rules` denies other
   Polkit actions for the configured user; and
 - the one early recovery action can still authenticate the active local user
   with `AUTH_SELF` and run only `helper enable`.
@@ -75,9 +75,9 @@ primitive.
 Polkit rules are ordered around the dynamic deny rule:
 
 ```text
-05-omarchy-admin-toggle-recovery.rules  enable -> AUTH_SELF
-10-omarchy-admin-toggle-off.rules       target user -> NO (Admin OFF only)
-20-omarchy-admin-toggle-manage.rules    disable -> AUTH_SELF
+05-omarchy-escalock-recovery.rules  enable -> AUTH_SELF
+10-omarchy-escalock-off.rules       target user -> NO (Admin OFF only)
+20-omarchy-escalock-manage.rules    disable -> AUTH_SELF
 50-default.rules                        normal wheel admin behavior
 ```
 
@@ -146,29 +146,37 @@ complete sudoers configuration. Unexpected existing project files or sudo
 contents cause a refusal rather than an overwrite.
 
 The installer creates a timestamped root-only backup under
-`/var/backups/omarchy-admin-toggle/`, installs and validates recovery, verifies
+`/var/backups/omarchy-escalock/`, installs and validates recovery, verifies
 the helper reports `enabled`, and leaves Administrator Mode ON—displayed as
 Secure Mode OFF. It never performs the first disable.
+
+An existing pre-publication `andrewbacon.admin-toggle` deployment is migrated
+transactionally. The old recovery path must report Administrator Mode ON.
+EscaLock is then installed and verified alongside it, the exact bar-layout ID
+is replaced while retaining position and widget settings, and only then are
+the legacy files removed. If validation fails before cleanup, the old
+deployment and bar configuration are restored. The migration backup includes
+the former root configuration, helper, policy, plugin, and `shell.json`.
 
 If the live Omarchy shell is reachable, place the validated widget on the bar:
 
 ```bash
-omarchy plugin enable andrewbacon.admin-toggle --section right
+omarchy plugin enable andrewbacon.escalock --section right
 ```
 
 The installed files are:
 
 ```text
-/usr/local/libexec/omarchy-admin-toggle-helper              root:root 4755
-/usr/local/bin/omarchy-admin-toggle                         root:root 0755
-/etc/omarchy-admin-toggle/config                            root:root 0600
-/etc/omarchy-admin-toggle/sudoers.template                  root:root 0440
-/etc/omarchy-admin-toggle/*.rules.template                  root:root 0644
-/etc/omarchy-admin-toggle/*.policy.template                 root:root 0644
-/etc/polkit-1/rules.d/05-omarchy-admin-toggle-recovery.rules
-/etc/polkit-1/rules.d/20-omarchy-admin-toggle-manage.rules
-/usr/share/polkit-1/actions/com.github.andrewbacon.omarchy-admin-toggle.policy
-~/.config/omarchy/plugins/andrewbacon.admin-toggle/
+/usr/local/libexec/omarchy-escalock-helper              root:root 4755
+/usr/local/bin/omarchy-escalock                         root:root 0755
+/etc/omarchy-escalock/config                            root:root 0600
+/etc/omarchy-escalock/sudoers.template                  root:root 0440
+/etc/omarchy-escalock/*.rules.template                  root:root 0644
+/etc/omarchy-escalock/*.policy.template                 root:root 0644
+/etc/polkit-1/rules.d/05-omarchy-escalock-recovery.rules
+/etc/polkit-1/rules.d/20-omarchy-escalock-manage.rules
+/usr/share/polkit-1/actions/com.github.andrewbacon.omarchy-escalock.policy
+~/.config/omarchy/plugins/andrewbacon.escalock/
 ```
 
 The `10-...-off.rules` file and `sudoers.disabled` do not exist immediately
@@ -186,13 +194,16 @@ authentication. Every result is reread from the helper.
 The same mechanism is available from a terminal:
 
 ```bash
-omarchy-admin-toggle status
-omarchy-admin-toggle enable
-omarchy-admin-toggle disable
-omarchy-admin-toggle toggle
+omarchy-escalock status
+omarchy-escalock on
+omarchy-escalock off
+omarchy-escalock toggle
 ```
 
-Expected status output is `enabled`, `disabled`, or `inconsistent`.
+The public CLI follows the displayed security state: `on` turns Secure Mode
+on, while `off` restores administrator privileges. Expected status output is
+`on`, `off`, or `inconsistent`. The privileged helper retains its deliberately
+small internal `status|enable|disable` interface.
 Authentication cancellation changes nothing and is reported separately from
 authorization denial.
 
@@ -201,7 +212,7 @@ authorization denial.
 If the widget or shell is unavailable, use:
 
 ```bash
-omarchy-admin-toggle enable
+omarchy-escalock off
 ```
 
 `pkexec` can fall back to a textual authentication agent in a TTY if no
@@ -209,7 +220,7 @@ graphical agent is registered. Authenticate as the configured user. Then
 verify:
 
 ```bash
-omarchy-admin-toggle status
+omarchy-escalock status
 sudo -k
 sudo whoami
 ```
@@ -224,12 +235,12 @@ Arch/Omarchy live environment, mount the system root, and enter it with
 `arch-chroot`. Then, as root:
 
 ```bash
-visudo -cf /etc/omarchy-admin-toggle/sudoers.template
+visudo -cf /etc/omarchy-escalock/sudoers.template
 install -o root -g root -m 0440 \
-  /etc/omarchy-admin-toggle/sudoers.template \
+  /etc/omarchy-escalock/sudoers.template \
   /etc/sudoers.d/00_abacon
 visudo -c
-rm -f /etc/polkit-1/rules.d/10-omarchy-admin-toggle-off.rules
+rm -f /etc/polkit-1/rules.d/10-omarchy-escalock-off.rules
 ```
 
 Replace `00_abacon` only if the root-owned `config` names a different target.

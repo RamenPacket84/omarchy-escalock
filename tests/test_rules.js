@@ -21,12 +21,12 @@ function loadRule(file) {
   return registered[0]
 }
 
-const recovery = loadRule("05-omarchy-admin-toggle-recovery.rules.in")
-const off = loadRule("10-omarchy-admin-toggle-off.rules.in")
-const manage = loadRule("20-omarchy-admin-toggle-manage.rules.in")
+const recovery = loadRule("05-omarchy-escalock-recovery.rules.in")
+const off = loadRule("10-omarchy-escalock-off.rules.in")
+const manage = loadRule("20-omarchy-escalock-manage.rules.in")
 
-const enable = { id: "com.github.andrewbacon.omarchy-admin-toggle.enable" }
-const disable = { id: "com.github.andrewbacon.omarchy-admin-toggle.disable" }
+const enable = { id: "com.github.andrewbacon.omarchy-escalock.enable" }
+const disable = { id: "com.github.andrewbacon.omarchy-escalock.disable" }
 const generic = { id: "org.freedesktop.policykit.exec" }
 const localTarget = { user: target, local: true, active: true }
 const inactiveTarget = { user: target, local: true, active: false }

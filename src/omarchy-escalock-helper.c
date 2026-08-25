@@ -22,26 +22,26 @@
 #define PATH_MAX 4096
 #endif
 
-#define CONFIG_DIR "/etc/omarchy-admin-toggle"
+#define CONFIG_DIR "/etc/omarchy-escalock"
 #define CONFIG_FILE CONFIG_DIR "/config"
 #define SUDO_TEMPLATE CONFIG_DIR "/sudoers.template"
 #define SUDO_DISABLED CONFIG_DIR "/sudoers.disabled"
-#define OFF_TEMPLATE CONFIG_DIR "/10-omarchy-admin-toggle-off.rules.template"
-#define RECOVERY_TEMPLATE CONFIG_DIR "/05-omarchy-admin-toggle-recovery.rules.template"
-#define MANAGE_TEMPLATE CONFIG_DIR "/20-omarchy-admin-toggle-manage.rules.template"
-#define POLICY_TEMPLATE CONFIG_DIR "/com.github.andrewbacon.omarchy-admin-toggle.policy.template"
+#define OFF_TEMPLATE CONFIG_DIR "/10-omarchy-escalock-off.rules.template"
+#define RECOVERY_TEMPLATE CONFIG_DIR "/05-omarchy-escalock-recovery.rules.template"
+#define MANAGE_TEMPLATE CONFIG_DIR "/20-omarchy-escalock-manage.rules.template"
+#define POLICY_TEMPLATE CONFIG_DIR "/com.github.andrewbacon.omarchy-escalock.policy.template"
 #define LOCK_FILE CONFIG_DIR "/lock"
 
 #define SUDOERS_MAIN "/etc/sudoers"
 #define SUDOERS_DIR "/etc/sudoers.d"
-#define OFF_RULE "/etc/polkit-1/rules.d/10-omarchy-admin-toggle-off.rules"
-#define RECOVERY_RULE "/etc/polkit-1/rules.d/05-omarchy-admin-toggle-recovery.rules"
-#define MANAGE_RULE "/etc/polkit-1/rules.d/20-omarchy-admin-toggle-manage.rules"
-#define POLICY_FILE "/usr/share/polkit-1/actions/com.github.andrewbacon.omarchy-admin-toggle.policy"
-#define HELPER_FILE "/usr/local/libexec/omarchy-admin-toggle-helper"
+#define OFF_RULE "/etc/polkit-1/rules.d/10-omarchy-escalock-off.rules"
+#define RECOVERY_RULE "/etc/polkit-1/rules.d/05-omarchy-escalock-recovery.rules"
+#define MANAGE_RULE "/etc/polkit-1/rules.d/20-omarchy-escalock-manage.rules"
+#define POLICY_FILE "/usr/share/polkit-1/actions/com.github.andrewbacon.omarchy-escalock.policy"
+#define HELPER_FILE "/usr/local/libexec/omarchy-escalock-helper"
 
-#define ENABLE_ACTION "com.github.andrewbacon.omarchy-admin-toggle.enable"
-#define DISABLE_ACTION "com.github.andrewbacon.omarchy-admin-toggle.disable"
+#define ENABLE_ACTION "com.github.andrewbacon.omarchy-escalock.enable"
+#define DISABLE_ACTION "com.github.andrewbacon.omarchy-escalock.disable"
 
 #define VISUDO "/usr/bin/visudo"
 #define PKACTION "/usr/bin/pkaction"
@@ -85,7 +85,7 @@ _Noreturn static void fail(const char *fmt, ...)
 {
     va_list ap;
 
-    fputs("omarchy-admin-toggle-helper: ", stderr);
+    fputs("omarchy-escalock-helper: ", stderr);
     va_start(ap, fmt);
     vfprintf(stderr, fmt, ap);
     va_end(ap);
@@ -113,7 +113,7 @@ static void checked_snprintf(char *dest, size_t size, const char *fmt, ...)
 static void set_path(char *dest, size_t size, const char *absolute)
 {
 #ifdef TESTING
-    const char *root = getenv("OMARCHY_ADMIN_TOGGLE_TEST_ROOT");
+    const char *root = getenv("OMARCHY_ESCALOCK_TEST_ROOT");
     if (root != NULL && root[0] == '/') {
         checked_snprintf(dest, size, "%s%s", root, absolute);
         return;
@@ -584,7 +584,7 @@ static int lock_state(void)
 static bool mutation_caller_is_valid(const struct config *cfg)
 {
 #ifdef TESTING
-    const char *test = getenv("OMARCHY_ADMIN_TOGGLE_TEST_PKEXEC");
+    const char *test = getenv("OMARCHY_ESCALOCK_TEST_PKEXEC");
     if (test != NULL && strcmp(test, "1") == 0 && getuid() == cfg->uid)
         return true;
 #endif
@@ -728,11 +728,11 @@ int main(int argc, char **argv)
     umask(077);
     if (prctl(PR_SET_DUMPABLE, 0, 0, 0, 0) != 0)
         fail("could not disable process dumps");
-    openlog("omarchy-admin-toggle", LOG_PID, LOG_AUTHPRIV);
+    openlog("omarchy-escalock", LOG_PID, LOG_AUTHPRIV);
     if (argc != 2 || (strcmp(argv[1], "status") != 0 &&
                       strcmp(argv[1], "enable") != 0 &&
                       strcmp(argv[1], "disable") != 0))
-        fail("usage: omarchy-admin-toggle-helper {status|enable|disable}");
+        fail("usage: omarchy-escalock-helper {status|enable|disable}");
     if (!config_directory_is_secure() || !load_config(&cfg)) {
         if (strcmp(argv[1], "status") == 0) {
             puts("inconsistent");

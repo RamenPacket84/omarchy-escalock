@@ -7,8 +7,8 @@ import "StateModel.js" as StateModel
 
 Panel {
   id: root
-  moduleName: "andrewbacon.admin-toggle"
-  ipcTarget: "andrewbacon.admin-toggle"
+  moduleName: "andrewbacon.escalock"
+  ipcTarget: "andrewbacon.escalock"
   manageIpc: false
 
   property string adminState: "inconsistent"
@@ -16,7 +16,7 @@ Panel {
   property bool statusError: false
   property bool refreshPending: false
 
-  readonly property string helper: "/usr/local/libexec/omarchy-admin-toggle-helper"
+  readonly property string helper: "/usr/local/libexec/omarchy-escalock-helper"
   readonly property bool busy: statusProcess.running || transitionProcess.running
   readonly property string secureModeState: StateModel.secureState(adminState)
   readonly property string icon: secureModeState === "on" ? "\uf023"

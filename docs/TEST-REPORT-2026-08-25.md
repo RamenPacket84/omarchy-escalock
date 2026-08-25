@@ -1,5 +1,11 @@
 # Live test report — 2026-08-25
 
+This report records the pre-publication deployment before it was renamed to
+EscaLock. Legacy executable names and `enabled`/`disabled` CLI output below are
+retained because they are the exact interface that was tested. EscaLock 1.1.0
+keeps the same helper and enforcement semantics while exposing public CLI
+states as `on` and `off`.
+
 ## System
 
 - Omarchy `4.0.1-1`
@@ -50,7 +56,8 @@ available to the target user.
 
 ## Recovery and restored state
 
-Only `omarchy-admin-toggle enable` was used to regain Administrator Mode. Its
+Only the legacy `omarchy-admin-toggle enable` command was used to regain
+Administrator Mode. Its
 custom `AUTH_SELF` action authenticated the configured user and returned
 `enabled`.
 

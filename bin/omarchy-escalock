@@ -1,0 +1,88 @@
+#!/bin/bash
+
+set -euo pipefail
+
+readonly helper=/usr/local/libexec/omarchy-escalock-helper
+readonly pkexec=/usr/bin/pkexec
+
+usage() {
+  echo "Usage: omarchy-escalock {status|on|off|toggle}" >&2
+  exit 2
+}
+
+helper_status() {
+  "$helper" status
+}
+
+status() {
+  case "$(helper_status)" in
+    enabled) echo off ;;
+    disabled) echo on ;;
+    inconsistent) echo inconsistent ;;
+    *)
+      echo "Could not determine Secure Mode state." >&2
+      return 1
+      ;;
+  esac
+}
+
+change_state() {
+  local operation=$1
+  local secure_state=$2
+  local result
+  local rc
+
+  set +e
+  result=$("$pkexec" "$helper" "$operation")
+  rc=$?
+  set -e
+  case $rc in
+    0)
+      if [[ $operation == enable && $result == enabled ]] ||
+         [[ $operation == disable && $result == disabled ]]; then
+        printf '%s\n' "$secure_state"
+      else
+        echo "Secure Mode transition returned an unexpected state: $result" >&2
+        return 1
+      fi
+      ;;
+    126)
+      echo "Authentication was canceled; Secure Mode was not changed." >&2
+      return 126
+      ;;
+    127)
+      echo "Authorization was denied or unavailable; Secure Mode was not changed." >&2
+      return 127
+      ;;
+    *)
+      echo "Secure Mode transition failed; inspect the helper error above." >&2
+      return "$rc"
+      ;;
+  esac
+}
+
+(( $# == 1 )) || usage
+case "$1" in
+  status)
+    status
+    ;;
+  on)
+    change_state disable on
+    ;;
+  off)
+    change_state enable off
+    ;;
+  toggle)
+    case "$(helper_status)" in
+      enabled) change_state disable on ;;
+      disabled) change_state enable off ;;
+      *)
+        echo "Secure Mode is inconsistent; refusing to guess a transition." >&2
+        exit 1
+        ;;
+    esac
+    ;;
+  *)
+    usage
+    ;;
+esac

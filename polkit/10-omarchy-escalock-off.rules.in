@@ -4,7 +4,7 @@ polkit.addRule(function(action, subject) {
     if (subject.user !== "@@TARGET_USER@@")
         return null;
 
-    if (action.id === "com.github.andrewbacon.omarchy-admin-toggle.enable") {
+    if (action.id === "com.github.andrewbacon.omarchy-escalock.enable") {
         if (subject.local && subject.active)
             return polkit.Result.AUTH_SELF;
         return polkit.Result.NO;
@@ -12,4 +12,3 @@ polkit.addRule(function(action, subject) {
 
     return polkit.Result.NO;
 });
-
