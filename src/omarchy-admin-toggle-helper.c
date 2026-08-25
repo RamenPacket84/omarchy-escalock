@@ -81,7 +81,7 @@ static char path_manage_rule[PATH_MAX];
 static char path_policy_file[PATH_MAX];
 static char path_helper_file[PATH_MAX];
 
-static void fail(const char *fmt, ...)
+_Noreturn static void fail(const char *fmt, ...)
 {
     va_list ap;
 
@@ -93,7 +93,7 @@ static void fail(const char *fmt, ...)
     exit(EXIT_FAILURE);
 }
 
-static void fail_errno(const char *operation, const char *path)
+_Noreturn static void fail_errno(const char *operation, const char *path)
 {
     fail("%s %s: %s", operation, path, strerror(errno));
 }
@@ -589,7 +589,7 @@ static bool mutation_caller_is_valid(const struct config *cfg)
         return true;
 #endif
     {
-        uid_t caller;
+        uid_t caller = (uid_t)-1;
         const char *pkexec_uid = getenv("PKEXEC_UID");
         return getuid() == 0 && geteuid() == 0 &&
                parse_uid(pkexec_uid, &caller) && caller == cfg->uid;
@@ -598,7 +598,7 @@ static bool mutation_caller_is_valid(const struct config *cfg)
 
 static bool status_caller_is_valid(const struct config *cfg)
 {
-    uid_t pk_uid;
+    uid_t pk_uid = (uid_t)-1;
     const char *pkexec_uid = getenv("PKEXEC_UID");
 
 #ifdef TESTING
