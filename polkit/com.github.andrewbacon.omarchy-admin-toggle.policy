@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC
+  "-//freedesktop//DTD polkit Policy Configuration 1.0//EN"
+  "http://www.freedesktop.org/software/polkit/policyconfig-1.dtd">
+<policyconfig>
+  <vendor>Omarchy Admin Toggle</vendor>
+  <vendor_url>https://github.com/andrewbacon/omarchy-admin-toggle</vendor_url>
+
+  <action id="com.github.andrewbacon.omarchy-admin-toggle.enable">
+    <description>Enable Administrator Mode</description>
+    <message>Authentication is required to restore Administrator Mode</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>no</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/local/libexec/omarchy-admin-toggle-helper</annotate>
+    <annotate key="org.freedesktop.policykit.exec.argv1">enable</annotate>
+  </action>
+
+  <action id="com.github.andrewbacon.omarchy-admin-toggle.disable">
+    <description>Disable Administrator Mode</description>
+    <message>Authentication is required to disable Administrator Mode</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>no</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/local/libexec/omarchy-admin-toggle-helper</annotate>
+    <annotate key="org.freedesktop.policykit.exec.argv1">disable</annotate>
+  </action>
+</policyconfig>
+

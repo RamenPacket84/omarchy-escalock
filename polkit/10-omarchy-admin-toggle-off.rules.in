@@ -1,0 +1,15 @@
+// Installed dynamically only while Administrator Mode is OFF.
+// It must sort after recovery (05) and before manage/default rules (20/50).
+polkit.addRule(function(action, subject) {
+    if (subject.user !== "@@TARGET_USER@@")
+        return null;
+
+    if (action.id === "com.github.andrewbacon.omarchy-admin-toggle.enable") {
+        if (subject.local && subject.active)
+            return polkit.Result.AUTH_SELF;
+        return polkit.Result.NO;
+    }
+
+    return polkit.Result.NO;
+});
+
