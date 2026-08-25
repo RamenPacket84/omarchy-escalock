@@ -4,7 +4,6 @@
   "http://www.freedesktop.org/software/polkit/policyconfig-1.dtd">
 <policyconfig>
   <vendor>Omarchy Admin Toggle</vendor>
-  <vendor_url>https://github.com/andrewbacon/omarchy-admin-toggle</vendor_url>
 
   <action id="com.github.andrewbacon.omarchy-admin-toggle.enable">
     <description>Enable Administrator Mode</description>
@@ -30,4 +29,3 @@
     <annotate key="org.freedesktop.policykit.exec.argv1">disable</annotate>
   </action>
 </policyconfig>
-

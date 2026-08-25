@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "id": "andrewbacon.admin-toggle",
+  "name": "Administrator Mode",
+  "version": "1.0.0",
+  "author": "Andrew Bacon",
+  "license": "MIT",
+  "description": "Securely control subsequent sudo and Polkit administrator elevation",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Administrator Mode",
+    "description": "Toggle general administrator elevation for the local user",
+    "category": "System",
+    "allowMultiple": false,
+    "defaultSection": "right"
+  }
+}
+
