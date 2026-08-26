@@ -16,6 +16,12 @@ equal(context.secureState("enabled"), "off", "administrator enabled means Secure
 equal(context.secureState("disabled"), "on", "administrator disabled means Secure Mode on")
 equal(context.secureState("inconsistent"), "error", "inconsistent state remains visible")
 
+equal(context.setupState(false, false, "", "2.0.0"), "checking", "unchecked setup state")
+equal(context.setupState(true, false, "", "2.0.0"), "missing", "missing helper needs setup")
+equal(context.setupState(true, true, "1.0.0", "2.0.0"), "update", "old helper needs update")
+equal(context.setupState(true, true, "", "2.0.0"), "update", "broken helper needs update")
+equal(context.setupState(true, true, "2.0.0", "2.0.0"), "ready", "matching helper is ready")
+
 equal(context.stateLabel("enabled"), "Secure Mode OFF", "enabled label")
 equal(context.stateLabel("disabled"), "Secure Mode ON", "disabled label")
 equal(context.stateLabel("inconsistent"), "Secure Mode ?", "error label")
@@ -26,4 +32,3 @@ equal(context.actionHint("enabled"), "turn Secure Mode on", "enabled action")
 equal(context.actionHint("disabled"), "turn Secure Mode off", "disabled action")
 
 console.log("Secure Mode state mapping tests passed")
-

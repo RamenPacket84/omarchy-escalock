@@ -1,269 +1,276 @@
 # EscaLock for Omarchy
 
-`andrewbacon.escalock` is an Omarchy 4.x Secure Mode bar widget and local
-security control for one explicitly configured user. It coordinates that
-user's dedicated sudo grant with an early Polkit deny rule so the bar reflects
-and changes real authorization state rather than remembering a cosmetic
-toggle.
+EscaLock is a Secure Mode bar widget for Omarchy 4. It lets one local desktop
+user temporarily give up general administrator elevation, clearly displays the
+real system state, and provides an authenticated way to restore access.
 
-This software changes access to root. Review the source, run the dry-run and
-tests, preserve the installer backup, and verify recovery before turning
-Secure Mode on for the first time.
+EscaLock changes sudo and Polkit authorization. Read the [limitations](#what-secure-mode-does-not-do)
+and [recovery instructions](#recovery) before enabling Secure Mode for the
+first time.
 
-## Meaning of the two states
+## How it works
 
-Secure Mode **OFF** (Administrator Mode **ON**) means:
+EscaLock has two user-facing states:
 
-- `/etc/sudoers.d/00_USER` is the exact root-owned grant captured at install;
-- the dynamic Admin-OFF Polkit rule is absent; and
-- normal Polkit behavior, including the system's `wheel` administrator rule,
-  is allowed to apply.
+| Widget state | Administrator Mode | General sudo | Generic `pkexec` |
+| --- | --- | --- | --- |
+| Secure Mode **OFF** | ON | Available normally | Handled normally by Omarchy |
+| Secure Mode **ON** | OFF | Managed general grant removed | Denied for the configured user |
 
-Secure Mode **ON** (Administrator Mode **OFF**) means:
+When Secure Mode turns on, EscaLock preserves the managed sudo grant in a
+root-only directory and activates an early Polkit deny rule. The only EscaLock
+recovery action left available asks for the configured user's own password and
+restores Administrator Mode.
 
-- the dedicated general sudo grant is preserved as
-  `/etc/omarchy-escalock/sudoers.disabled`, outside `sudoers.d`;
-- `/etc/polkit-1/rules.d/10-omarchy-escalock-off.rules` denies other
-  Polkit actions for the configured user; and
-- the one early recovery action can still authenticate the active local user
-  with `AUTH_SELF` and run only `helper enable`.
+The widget does not remember a preference and assume it succeeded. It reads
+the protected sudo and Polkit state, compares the effective sudo policy with
+root-owned snapshots, and displays:
 
-Secure Mode ON does **not** mean that the account has no privileged
-capabilities at all. Separate, narrowly scoped Omarchy sudo rules are
-intentionally retained. On the test system these include delegated DNS,
-time-zone, and display-control operations. Secure Mode ON removes
-general-purpose sudo and generic Polkit/root elevation while leaving those
-explicit system delegations alone.
+- `Secure Mode ON` when the restrictions are verified;
+- `Secure Mode OFF` when administrator access is verified; or
+- `Secure Mode ?` when the files or effective policies are inconsistent.
 
-The helper reports `inconsistent` instead of guessing whenever the protected
-files do not form one of the two exact states. The desktop deliberately
-presents the inverse security concept: helper `enabled` means `Secure Mode
-OFF`, while helper `disabled` means `Secure Mode ON`.
+EscaLock refuses to guess or perform another transition from an inconsistent
+state.
 
-## Architecture
+## Requirements
 
-```text
-Omarchy bar widget or CLI
-        |
-        +-- helper status (authoritative, read-only)
-        |
-        `-- /usr/bin/pkexec
-                  |
-                  +-- ...enable action (AUTH_SELF, recovery)
-                  +-- ...disable action (AUTH_SELF, Admin ON only)
-                  |
-                  `-- root-owned helper {enable|disable}
-                              |
-                              +-- fixed sudo grant/template
-                              `-- fixed early Polkit OFF rule
-```
+- Omarchy 4.x
+- A normal local desktop account
+- An existing dedicated general sudo grant at `/etc/sudoers.d/00_USER`
+- The standard build and validation tools checked by `setup.sh`
 
-The compiled helper is root-owned and setuid so the configured user can obtain
-an authoritative status without repeated authentication despite
-`/etc/sudoers.d` being mode `0750`. Direct execution retains the caller's real
-UID and is accepted only for `status`. A mutation requires real UID 0,
-effective UID 0, and a strictly parsed `PKEXEC_UID` equal to the UID in the
-root-owned configuration. A user cannot satisfy the real-UID check by merely
-inventing that environment variable.
-
-The helper accepts exactly one argument: `status`, `enable`, or `disable`. It
-accepts no username, path, executable, shell fragment, environment-selected
-command, or sudoers content. Its external validation calls use absolute paths
-and a cleared environment. The production binary contains no shell execution
-primitive.
-
-Polkit rules are ordered around the dynamic deny rule:
-
-```text
-05-omarchy-escalock-recovery.rules  enable -> AUTH_SELF
-10-omarchy-escalock-off.rules       target user -> NO (Admin OFF only)
-20-omarchy-escalock-manage.rules    disable -> AUTH_SELF
-50-default.rules                        normal wheel admin behavior
-```
-
-The custom policy binds each action to both the absolute helper path and its
-fixed first argument using `org.freedesktop.policykit.exec.path` and
-`org.freedesktop.policykit.exec.argv1`. Policy defaults are `no`; only the
-generated rules authorize the configured active, local user. Remote, inactive,
-and other-user attempts are denied. No rule authorizes arbitrary `pkexec`.
-
-See [the detailed security design](docs/SECURITY-DESIGN.md).
-
-## Threat model and limitations
-
-The feature controls subsequent general elevation attempts by the configured
-user. It is intended to reduce the time a daily desktop account operates as a
-general administrator and to make the state visible.
-
-It cannot revoke or contain:
-
-- an already-running root shell or process;
-- a cached capability, open privileged descriptor, or privileged state
-  obtained before turning Secure Mode on;
-- compromise of root, the kernel, Polkit, sudo, or the helper itself; or
-- privilege-escalation bugs in separately delegated narrow commands.
-
-It does not remove the user from `wheel`. Existing graphical processes can
-retain supplementary group credentials, so group removal is not dependable as
-an immediate-session enforcement mechanism. The early Polkit rule instead
-returns the first non-null decision for the configured username.
-
-`AUTH_SELF` recovery is deliberate: the configured user can turn Secure Mode
-off and restore Administrator Mode using their own account password even
-though the Admin-OFF rule prevents them from being treated as a Polkit
-administrator. Anyone who knows that password and controls the active local
-session can therefore restore administrator privileges; this is a recovery
-property, not a second authentication factor.
-
-## Build and test
-
-Requirements include GCC, `visudo`, Polkit, jq, and Omarchy 4.x.
-
-```bash
-make clean all
-make check
-```
-
-The tests compile with strict warnings and hardening, validate the XML and
-Omarchy manifest/QML syntax, exercise rule ordering in JavaScript, and run
-enable/disable/inconsistent transitions inside an isolated fake filesystem.
-The test-only path and caller overrides are compiled out of the production
-binary.
+Setup reports a clear error without installing anything if the system is not
+compatible. EscaLock does not install packages or call a package manager. Run
+all commands as the desktop user, not from a root shell and not by prefixing
+the scripts with `sudo`.
 
 ## Install
 
-The installer requires an explicit target. On this laptop:
+Copy and run this one command as your normal desktop user:
 
 ```bash
-./install.sh --user abacon --dry-run
-./install.sh --user abacon
+omarchy plugin add https://github.com/RamenPacket84/omarchy-escalock.git --enable
 ```
 
-The non-root stage builds and validates the plugin, then uses interactive
-`sudo` for the installation stage. It verifies Omarchy 4.x, the account and
-UID, the exact existing `/etc/sudoers.d/00_USER` grant, ownership/mode, and the
-complete sudoers configuration. Unexpected existing project files or sudo
-contents cause a refusal rather than an overwrite.
+[Review the EscaLock source on GitHub](https://github.com/RamenPacket84/omarchy-escalock)
+before installing it.
 
-The installer creates a timestamped root-only backup under
-`/var/backups/omarchy-escalock/`, installs and validates recovery, verifies
-the helper reports `enabled`, and leaves Administrator Mode ON—displayed as
-Secure Mode OFF. It never performs the first disable.
+Omarchy warns that third-party plugins run unsandboxed, clones and validates
+the GitHub repository, and enables the widget. On a fresh installation,
+EscaLock then opens one guided setup terminal. You do not need to find the
+checkout or enter another command.
 
-An existing pre-publication `andrewbacon.admin-toggle` deployment is migrated
-transactionally. The old recovery path must report Administrator Mode ON.
-EscaLock is then installed and verified alongside it, the exact bar-layout ID
-is replaced while retaining position and widget settings, and only then are
-the legacy files removed. If validation fails before cleanup, the old
-deployment and bar configuration are restored. The migration backup includes
-the former root configuration, helper, policy, plugin, and `shell.json`.
+The guided setup:
 
-If the live Omarchy shell is reachable, place the validated widget on the bar:
+1. verifies Omarchy, the GitHub checkout, manifest, build, sudo policy, and
+   Polkit rule ordering;
+2. shows the exact version, Git commit, target user, and retained sudo
+   delegations;
+3. asks you to type `install` and authenticate with sudo;
+4. creates a root-only recovery backup under
+   `/var/backups/omarchy-escalock/`;
+5. installs and verifies the system components; and
+6. leaves the enabled widget ready in Secure Mode OFF.
+
+Administrator Mode remains ON after installation. Setup never performs the
+first Secure Mode transition automatically. Keep the backup path printed at
+the end. If you cancel or setup cannot complete, the widget remains visible
+with a **Finish setup** button so you can safely retry.
+
+### Check before installing
+
+To run the complete privileged preflight without installing or replacing
+system files:
 
 ```bash
-omarchy plugin enable andrewbacon.escalock --section right
+~/.config/omarchy/plugins/andrewbacon.escalock/setup.sh --check
 ```
 
-The installed files are:
+The preflight prints every sudo delegation that would remain usable in Secure
+Mode and labels its arguments as exact, patterned, or unrestricted. Review
+that list as part of deciding whether Secure Mode meets your needs.
 
-```text
-/usr/local/libexec/omarchy-escalock-helper              root:root 4755
-/usr/local/bin/omarchy-escalock                         root:root 0755
-/etc/omarchy-escalock/config                            root:root 0600
-/etc/omarchy-escalock/sudoers.template                  root:root 0440
-/etc/omarchy-escalock/*.rules.template                  root:root 0644
-/etc/omarchy-escalock/*.policy.template                 root:root 0644
-/etc/polkit-1/rules.d/05-omarchy-escalock-recovery.rules
-/etc/polkit-1/rules.d/20-omarchy-escalock-manage.rules
-/usr/share/polkit-1/actions/com.github.andrewbacon.omarchy-escalock.policy
-~/.config/omarchy/plugins/andrewbacon.escalock/
-```
+## Use the widget
 
-The `10-...-off.rules` file and `sudoers.disabled` do not exist immediately
-after installation; they appear only while Secure Mode is ON.
+- Left-click while Secure Mode is OFF to review the warning and turn it on.
+- Left-click while Secure Mode is ON to authenticate and restore Administrator
+  Mode.
+- Middle-click to refresh the authoritative state.
 
-## Use
+Authentication cancellation makes no change. The widget rereads system state
+after every attempted transition.
 
-The compact widget displays `Secure Mode ON`, `Secure Mode OFF`, or `Secure
-Mode ?`. It polls the helper's authoritative administrator state and applies
-the inverse mapping described above. Turning Secure Mode on requires a
-confirmation panel that explains the effect, followed by Polkit
-authentication. Turning it off immediately opens the `AUTH_SELF` recovery
-authentication. Every result is reread from the helper.
+## Command-line use
 
-The same mechanism is available from a terminal:
+The installed CLI follows the same Secure Mode terminology as the widget:
 
 ```bash
+omarchy-escalock version
 omarchy-escalock status
 omarchy-escalock on
 omarchy-escalock off
 omarchy-escalock toggle
 ```
 
-The public CLI follows the displayed security state: `on` turns Secure Mode
-on, while `off` restores administrator privileges. Expected status output is
-`on`, `off`, or `inconsistent`. The privileged helper retains its deliberately
-small internal `status|enable|disable` interface.
-Authentication cancellation changes nothing and is reported separately from
-authorization denial.
+`status` prints `on`, `off`, or `inconsistent`.
 
-## Normal recovery
+- `on` restricts general administrator elevation.
+- `off` authenticates and restores administrator elevation.
+- `toggle` changes only a verified state and refuses an inconsistent one.
 
-If the widget or shell is unavailable, use:
+If the bar is unavailable, `omarchy-escalock off` is also the normal recovery
+command.
+
+## What Secure Mode does not do
+
+Secure Mode limits subsequent general-purpose elevation attempts. It does not:
+
+- stop or contain an already-running root process or shell;
+- revoke open privileged descriptors, cached capabilities, or privileged state
+  acquired earlier;
+- remove the user from `wheel`;
+- protect against compromise of root, the kernel, sudo, Polkit, or EscaLock
+  itself; or
+- remove separately delegated sudo commands supplied by Omarchy.
+
+Setup snapshots all effective sudo rules matching the user. A distinct
+additional general `ALL` grant is rejected; an equivalent duplicate that sudo
+normalizes into the managed rule makes the Secure Mode transition fail and
+roll back. Setup also rejects common general-purpose or shell-escapable
+executables. Other executable-scoped delegations remain privileged
+capabilities. In particular, a sudo argument wildcard can span whitespace and
+may be broader than one apparent argument.
+
+Recovery uses `AUTH_SELF`: anyone who controls the active local session and
+knows the account password can restore Administrator Mode. EscaLock is an
+intentional privilege gate, not a second authentication factor.
+
+For the full threat model and implementation invariants, see
+[Security design](docs/SECURITY-DESIGN.md).
+
+## Update
+
+Restore Administrator Mode before updating, then update both the user-owned
+checkout and the privileged components:
 
 ```bash
 omarchy-escalock off
+omarchy plugin update andrewbacon.escalock --yes
+~/.config/omarchy/plugins/andrewbacon.escalock/setup.sh --upgrade
 ```
 
-`pkexec` can fall back to a textual authentication agent in a TTY if no
-graphical agent is registered. Authenticate as the configured user. Then
-verify:
+Setup creates a new backup and rolls back to the previous recovery path if the
+upgrade fails. The widget compares its version with the installed helper and
+disables transitions while an update is required.
+
+## Uninstall
+
+Run the installed uninstall command as the configured desktop user:
 
 ```bash
-omarchy-escalock status
-sudo -k
-sudo whoami
+omarchy-escalock uninstall
 ```
 
-Do not delete the helper, policy, recovery rule, configuration, or sudo
-template while Secure Mode is ON.
+The command safely performs the following sequence:
 
-## Emergency recovery from a live environment
+1. restores Administrator Mode through the normal authenticated recovery
+   action if Secure Mode is ON;
+2. refuses to continue if state is inconsistent;
+3. verifies the restored sudo grant and complete sudoers policy;
+4. creates a root-only uninstall backup;
+5. removes only EscaLock's fixed system paths and validates sudoers again; and
+6. asks Omarchy to remove the user-owned plugin checkout.
 
-Use this only if Polkit or the installed recovery mechanism is broken. Boot an
+Do not run `sudo omarchy-escalock uninstall`, and do not delete the checkout or
+system files manually while Secure Mode is ON. If Omarchy cannot remove the
+checkout after the system components are removed, the CLI prints the exact
+`omarchy plugin remove` command to finish cleanup.
+
+## Recovery
+
+### Normal recovery
+
+If the widget is missing or the Omarchy shell is unavailable, open a terminal:
+
+```bash
+omarchy-escalock off
+omarchy-escalock status
+sudo -k
+sudo -v
+```
+
+Authenticate as the configured user. The expected final EscaLock status is
+`off`.
+
+### Emergency recovery
+
+Use this only if the installed CLI/Polkit recovery path is broken. Boot an
 Arch/Omarchy live environment, mount the system root, and enter it with
-`arch-chroot`. Then, as root:
+`arch-chroot`. Read `TARGET_USER` from `/etc/omarchy-escalock/config`, then run
+as root:
 
 ```bash
 visudo -cf /etc/omarchy-escalock/sudoers.template
 install -o root -g root -m 0440 \
-  /etc/omarchy-escalock/sudoers.template \
-  /etc/sudoers.d/00_abacon
+  /etc/omarchy-escalock/sudoers.template /etc/sudoers.d/00_USER
 visudo -c
-rm -f /etc/polkit-1/rules.d/10-omarchy-escalock-off.rules
+install -o root -g root -m 0644 \
+  /etc/omarchy-escalock/00-00-omarchy-escalock-on.rules.template \
+  /etc/polkit-1/rules.d/00-00-omarchy-escalock.rules
+rm -f /etc/omarchy-escalock/sudoers.disabled
 ```
 
-Replace `00_abacon` only if the root-owned `config` names a different target.
-Do not improvise sudoers contents. Reboot, confirm Secure Mode is OFF and
-Administrator Mode is ON, and investigate why the normal recovery path failed
-before using the toggle again.
+Replace `00_USER` with the exact `00_<TARGET_USER>` filename. Reboot, verify
+Administrator Mode is restored, and investigate the failure before using
+Secure Mode again. The latest root-only setup backup is another exact recovery
+source.
 
-## Uninstall
+## Troubleshooting
 
-Run as the configured user:
+### The widget says setup or an update is required
+
+For a fresh installation, click the widget and choose **Finish setup**. If the
+guided terminal cannot be opened, run setup from the current plugin checkout:
 
 ```bash
-./uninstall.sh --user abacon
+~/.config/omarchy/plugins/andrewbacon.escalock/setup.sh --enable
 ```
 
-If Secure Mode is ON, the uninstaller first uses the normal custom recovery
-action to turn it off and restore Administrator Mode. It refuses inconsistent
-state or an unverified sudo template. After administrator access and full
-sudoers validation are confirmed, it disables/removes the widget, backs up
-project configuration, removes Polkit/helper/config files, revalidates
-sudoers, and verifies the general grant remains present. It will not report
-success if removing the project would strand the machine without the known
-administrator grant.
+For an update, Administrator Mode must be ON first. If needed, run
+`omarchy-escalock off`, then follow the commands in [Update](#update).
+
+### Status is `inconsistent`
+
+Do not manually remove recovery files or attempt repeated transitions. Review
+the root-owned installation metadata and backups, then run the setup preflight:
+
+```bash
+~/.config/omarchy/plugins/andrewbacon.escalock/setup.sh --check
+```
+
+If the normal recovery command no longer works, use the emergency procedure
+above.
+
+### `pkexec` says “Not authorized” while Secure Mode is ON
+
+That is expected for generic `pkexec` commands. Only EscaLock's fixed recovery
+action remains available to the configured user.
+
+## Development
+
+Local development uses an explicit flag so uncommitted files cannot be
+mistaken for the published installation payload:
+
+```bash
+make clean check
+./setup.sh --development --check
+./setup.sh --development --enable
+```
+
+Production setup builds the exact clean Git commit, hands only a fixed
+SHA-256-verified payload to root, records its commit and digest, and never lets
+root traverse or modify the plugin checkout in the user's home directory.
 
 ## License
 

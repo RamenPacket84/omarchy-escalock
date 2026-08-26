@@ -21,9 +21,8 @@ function loadRule(file) {
   return registered[0]
 }
 
-const recovery = loadRule("05-omarchy-escalock-recovery.rules.in")
-const off = loadRule("10-omarchy-escalock-off.rules.in")
-const manage = loadRule("20-omarchy-escalock-manage.rules.in")
+const on = loadRule("00-00-omarchy-escalock-on.rules.in")
+const off = loadRule("00-00-omarchy-escalock-off.rules.in")
 
 const enable = { id: "com.github.andrewbacon.omarchy-escalock.enable" }
 const disable = { id: "com.github.andrewbacon.omarchy-escalock.disable" }
@@ -45,17 +44,20 @@ function equal(actual, expected, label) {
   if (actual !== expected) throw new Error(`${label}: expected ${expected}, got ${actual}`)
 }
 
-equal(decide([recovery, manage], enable, localTarget), "AUTH_SELF", "ON enable recovery")
-equal(decide([recovery, manage], disable, localTarget), "AUTH_SELF", "ON disable")
-equal(decide([recovery, manage], generic, localTarget), null, "ON generic falls through")
+equal(decide([on], enable, localTarget), "AUTH_SELF", "ON enable recovery")
+equal(decide([on], disable, localTarget), "AUTH_SELF", "ON disable")
+equal(decide([on], generic, localTarget), null, "ON generic falls through")
 
-equal(decide([recovery, off, manage], enable, localTarget), "AUTH_SELF", "OFF recovery")
-equal(decide([recovery, off, manage], disable, localTarget), "NO", "OFF disable denied")
-equal(decide([recovery, off, manage], generic, localTarget), "NO", "OFF generic denied")
-equal(decide([recovery, off, manage], enable, inactiveTarget), "NO", "inactive recovery denied")
-equal(decide([recovery, off, manage], enable, remoteTarget), "NO", "remote recovery denied")
-equal(decide([recovery, off, manage], enable, other), "NO", "other-user recovery denied")
-equal(decide([recovery, off, manage], generic, other), null, "other-user generic untouched")
+equal(decide([off], enable, localTarget), "AUTH_SELF", "OFF recovery")
+equal(decide([off], disable, localTarget), "NO", "OFF disable denied")
+equal(decide([off], generic, localTarget), "NO", "OFF generic denied")
+equal(decide([off], enable, inactiveTarget), "NO", "inactive recovery denied")
+equal(decide([off], enable, remoteTarget), "NO", "remote recovery denied")
+equal(decide([off], enable, other), null, "other-user recovery untouched")
+equal(decide([off], generic, other), null, "other-user generic untouched")
+
+const earlierAllow = function() { return "YES" }
+equal(decide([earlierAllow, off], generic, localTarget), "YES",
+  "an earlier rule would preempt EscaLock and must be rejected by setup")
 
 console.log("Polkit rule-order tests passed")
-

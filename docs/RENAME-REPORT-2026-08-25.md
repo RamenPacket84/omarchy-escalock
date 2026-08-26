@@ -1,5 +1,9 @@
 # EscaLock rename and migration report — 2026-08-25
 
+> Historical record: this report covers the pre-publication 1.1.0 deployment.
+> It does not validate the 2.0.0 GitHub/setup workflow or its consolidated
+> Polkit and effective-sudo-policy checks.
+
 ## Scope
 
 The pre-publication `andrewbacon.admin-toggle` deployment was renamed to

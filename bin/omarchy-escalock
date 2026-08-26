@@ -3,10 +3,14 @@
 set -euo pipefail
 
 readonly helper=/usr/local/libexec/omarchy-escalock-helper
+readonly maintainer=/usr/local/libexec/omarchy-escalock-maintain
 readonly pkexec=/usr/bin/pkexec
+readonly sudo=/usr/bin/sudo
+readonly omarchy=/usr/share/omarchy/bin/omarchy
+readonly plugin_id=andrewbacon.escalock
 
 usage() {
-  echo "Usage: omarchy-escalock {status|on|off|toggle}" >&2
+  echo "Usage: omarchy-escalock {version|status|on|off|toggle|uninstall}" >&2
   exit 2
 }
 
@@ -61,8 +65,49 @@ change_state() {
   esac
 }
 
+uninstall_escalock() {
+  local target_user
+
+  (( EUID != 0 )) || {
+    echo "Run uninstall as the configured desktop user, not with sudo." >&2
+    return 1
+  }
+  target_user=$(/usr/bin/id -un)
+  case "$(helper_status)" in
+    enabled) ;;
+    disabled)
+      echo "Restoring Administrator Mode before uninstall..." >&2
+      change_state enable off >/dev/null
+      ;;
+    *)
+      echo "Secure Mode is inconsistent; preserving the recovery mechanism." >&2
+      return 1
+      ;;
+  esac
+  [[ $(helper_status) == enabled ]] || {
+    echo "Administrator Mode could not be verified ON." >&2
+    return 1
+  }
+  [[ -x $maintainer ]] || {
+    echo "The installed maintenance tool is missing; preserving system files." >&2
+    return 1
+  }
+
+  "$omarchy" plugin disable "$plugin_id" 2>/dev/null || true
+  "$sudo" -- "$maintainer" uninstall --user "$target_user"
+  if "$omarchy" plugin remove "$plugin_id" --yes; then
+    echo "Removed the EscaLock plugin checkout."
+  else
+    echo "System components were removed; remove the plugin checkout with:" >&2
+    echo "  omarchy plugin remove $plugin_id --yes" >&2
+  fi
+}
+
 (( $# == 1 )) || usage
 case "$1" in
+  version)
+    "$helper" version
+    ;;
   status)
     status
     ;;
@@ -81,6 +126,9 @@ case "$1" in
         exit 1
         ;;
     esac
+    ;;
+  uninstall)
+    uninstall_escalock
     ;;
   *)
     usage

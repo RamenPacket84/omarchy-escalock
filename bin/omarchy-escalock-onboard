@@ -1,0 +1,85 @@
+#!/bin/bash
+
+set -euo pipefail
+umask 077
+export LC_ALL=C
+
+readonly project_root=$(cd -- "$(/usr/bin/dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
+readonly setup="$project_root/setup.sh"
+readonly manifest="$project_root/manifest.json"
+readonly helper=/usr/local/libexec/omarchy-escalock-helper
+readonly terminal_launcher=/usr/bin/omarchy-launch-floating-terminal-with-presentation
+
+automatic=false
+
+fail() {
+  echo "omarchy-escalock-onboard: $*" >&2
+  exit 1
+}
+
+usage() {
+  echo "Usage: omarchy-escalock-onboard [--automatic]"
+}
+
+while (( $# > 0 )); do
+  case "$1" in
+    --automatic)
+      automatic=true
+      shift
+      ;;
+    -h | --help)
+      usage
+      exit 0
+      ;;
+    *)
+      usage >&2
+      exit 2
+      ;;
+  esac
+done
+
+(( EUID != 0 )) || fail "run setup as the desktop user, not with sudo"
+[[ -x $setup && ! -L $setup ]] || fail "the repository setup script is missing or unsafe"
+[[ -f $manifest && ! -L $manifest ]] || fail "the repository manifest is missing or unsafe"
+[[ -x $terminal_launcher ]] || fail "Omarchy's floating terminal launcher is unavailable"
+[[ -x /usr/bin/jq ]] || fail "required command is missing: /usr/bin/jq"
+
+version=$(/usr/bin/jq -er '.version' "$manifest") || fail "the repository manifest has no valid version"
+[[ $version =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]] || fail "the repository version is unsafe"
+
+# Automatic onboarding is only for a genuinely fresh installation. An older
+# helper needs an intentional update after Administrator Mode has been restored.
+if [[ $automatic == true && -x $helper ]]; then
+  exit 0
+fi
+
+marker_created=false
+marker=
+if [[ $automatic == true ]]; then
+  state_root=${XDG_STATE_HOME:-${HOME:-}/.local/state}
+  [[ $state_root == /* && $state_root != / ]] || fail "XDG state directory is unsafe"
+  state_dir="$state_root/omarchy-escalock"
+  [[ ! -L $state_dir ]] || fail "onboarding state directory must not be a symlink"
+  [[ ! -e $state_dir || -d $state_dir ]] || fail "onboarding state path is not a directory"
+  /usr/bin/mkdir -p -- "$state_dir"
+  /usr/bin/chmod 0700 -- "$state_dir"
+  marker="$state_dir/setup-offered-$version"
+
+  # mkdir is an atomic, user-owned single-flight marker. A canceled setup is
+  # retried from the widget instead of opening a new terminal every shell load.
+  if ! /usr/bin/mkdir -- "$marker" 2>/dev/null; then
+    exit 0
+  fi
+  marker_created=true
+fi
+
+setup_command="$(printf '%q' "$setup") --enable"
+set +e
+"$terminal_launcher" "$setup_command"
+rc=$?
+set -e
+
+if (( rc != 0 )) && [[ $marker_created == true ]]; then
+  /usr/bin/rmdir -- "$marker" 2>/dev/null || true
+fi
+exit "$rc"

@@ -15,17 +15,56 @@ Panel {
   property string statusMessage: "Checking authoritative system state…"
   property bool statusError: false
   property bool refreshPending: false
+  property bool versionChecked: false
+  property bool helperPresent: false
+  property string installedSystemVersion: ""
+  property bool onboardingOffered: false
 
   readonly property string helper: "/usr/local/libexec/omarchy-escalock-helper"
-  readonly property bool busy: statusProcess.running || transitionProcess.running
+  readonly property string onboardingLauncher: Quickshell.env("HOME")
+    + "/.config/omarchy/plugins/andrewbacon.escalock/bin/omarchy-escalock-onboard"
+  readonly property string expectedSystemVersion: "2.0.0"
+  readonly property string setupState: StateModel.setupState(versionChecked,
+    helperPresent, installedSystemVersion, expectedSystemVersion)
+  readonly property bool setupMissing: setupState === "missing"
+  readonly property bool updateRequired: setupState === "update"
+  readonly property bool busy: helperProbe.running || versionProcess.running
+    || statusProcess.running || transitionProcess.running || onboardingProcess.running
   readonly property string secureModeState: StateModel.secureState(adminState)
   readonly property string icon: secureModeState === "on" ? "\uf023"
     : (secureModeState === "off" ? "\uf09c" : "󰀦")
-  readonly property string stateLabel: StateModel.stateLabel(adminState)
+  readonly property string stateLabel: setupMissing ? "EscaLock setup"
+    : (updateRequired ? "EscaLock update" : StateModel.stateLabel(adminState))
+  readonly property string actionHint: setupMissing ? "finish setup"
+    : (updateRequired ? "review the required update" : StateModel.actionHint(adminState))
   readonly property color foreground: bar ? bar.foreground : Color.foreground
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
 
   function refresh() {
+    if (!versionChecked) {
+      if (!helperProbe.running && !versionProcess.running) {
+        helperProbe.command = ["/usr/bin/test", "-x", helper]
+        helperProbe.running = true
+      }
+      return
+    }
+    if (setupMissing) {
+      adminState = "inconsistent"
+      statusMessage = "EscaLock system setup is required before Secure Mode can be used."
+      statusError = true
+      if (!onboardingOffered) {
+        onboardingOffered = true
+        onboardingTimer.restart()
+      }
+      return
+    }
+    if (updateRequired) {
+      adminState = "inconsistent"
+      statusMessage = "EscaLock system components must be updated to version "
+        + expectedSystemVersion + ". Restore Administrator Mode before updating."
+      statusError = true
+      return
+    }
     if (statusProcess.running) {
       refreshPending = true
       return
@@ -34,8 +73,30 @@ Panel {
     statusProcess.running = true
   }
 
+  function recheck() {
+    if (onboardingProcess.running) return
+    versionChecked = false
+    helperPresent = false
+    installedSystemVersion = ""
+    refresh()
+  }
+
+  function startSetup(automatic) {
+    if (onboardingProcess.running || !setupMissing) return
+    statusMessage = "Complete EscaLock setup in the opened terminal. Administrator Mode will remain ON."
+    statusError = false
+    close()
+    onboardingProcess.command = automatic
+      ? [onboardingLauncher, "--automatic"] : [onboardingLauncher]
+    onboardingProcess.running = true
+  }
+
   function requestToggle() {
     if (busy) return
+    if (setupMissing || updateRequired) {
+      open()
+      return
+    }
     if (adminState === "disabled") {
       runTransition("enable")
       return
@@ -73,14 +134,68 @@ Panel {
     }
   }
 
-  Component.onCompleted: refresh()
-  onOpenedChanged: if (opened) refresh()
+  Component.onCompleted: recheck()
+  onOpenedChanged: if (opened) recheck()
 
   Timer {
     interval: 5000
     repeat: true
     running: true
-    onTriggered: root.refresh()
+    onTriggered: root.recheck()
+  }
+
+  Timer {
+    id: onboardingTimer
+    interval: 750
+    repeat: false
+    onTriggered: root.startSetup(true)
+  }
+
+  Process {
+    id: helperProbe
+    onExited: function(exitCode) {
+      helperPresent = exitCode === 0
+      if (helperPresent) {
+        versionProcess.command = [helper, "version"]
+        versionProcess.running = true
+      } else {
+        installedSystemVersion = ""
+        versionChecked = true
+        Qt.callLater(root.refresh)
+      }
+    }
+  }
+
+  Process {
+    id: versionProcess
+    stdout: StdioCollector {
+      id: versionOutput
+      waitForEnd: true
+    }
+    onExited: function(exitCode) {
+      var value = String(versionOutput.text || "").trim()
+      installedSystemVersion = exitCode === 0 ? value : ""
+      helperPresent = true
+      versionChecked = true
+      Qt.callLater(root.refresh)
+    }
+  }
+
+  Process {
+    id: onboardingProcess
+    stderr: StdioCollector {
+      id: onboardingError
+      waitForEnd: true
+    }
+    onExited: function(exitCode) {
+      if (exitCode !== 0) {
+        var detail = String(onboardingError.text || "").trim()
+        statusMessage = detail !== "" ? detail : "EscaLock setup could not be opened."
+        statusError = true
+        return
+      }
+      Qt.callLater(root.recheck)
+    }
   }
 
   Process {
@@ -132,7 +247,7 @@ Panel {
     function open() { root.open() }
     function close() { root.close() }
     function toggle() { root.requestToggle() }
-    function refresh() { root.refresh() }
+    function refresh() { root.recheck() }
   }
 
   implicitWidth: button.implicitWidth
@@ -146,11 +261,11 @@ Panel {
     horizontalMargin: 8.75
     verticalPadding: 8.75
     tooltipText: root.stateLabel + (root.busy ? " · working…" : "")
-      + "\nLeft-click: " + StateModel.actionHint(root.adminState)
+      + "\nLeft-click: " + root.actionHint
       + " · Middle-click: refresh"
 
     onPressed: function(mouseButton) {
-      if (mouseButton === Qt.MiddleButton) root.refresh()
+      if (mouseButton === Qt.MiddleButton) root.recheck()
       else if (mouseButton === Qt.LeftButton) root.requestToggle()
     }
   }
@@ -176,7 +291,9 @@ Panel {
 
         Text {
           width: parent.width
-          text: StateModel.panelTitle(root.adminState)
+          text: root.setupMissing ? "Finish EscaLock setup"
+            : (root.updateRequired ? "EscaLock update required"
+              : StateModel.panelTitle(root.adminState))
           textFormat: Text.PlainText
           color: root.foreground
           font.family: root.fontFamily
@@ -204,7 +321,8 @@ Panel {
           Button {
             id: cancelButton
             width: (parent.width - parent.spacing) / 2
-            text: root.adminState === "enabled" ? "Keep OFF" : "Close"
+            text: root.adminState === "enabled" && !root.setupMissing
+              && !root.updateRequired ? "Keep OFF" : "Close"
             enabled: !root.busy
             foreground: root.foreground
             onClicked: root.close()
@@ -212,12 +330,15 @@ Panel {
 
           Button {
             width: cancelButton.width
-            text: root.adminState === "enabled" ? "Turn ON" : "Refresh"
+            text: root.setupMissing ? "Finish setup"
+              : (root.adminState === "enabled" && !root.updateRequired ? "Turn ON" : "Refresh")
             enabled: !root.busy
             foreground: root.foreground
             onClicked: {
-              if (root.adminState === "enabled") root.runTransition("disable")
-              else root.refresh()
+              if (root.setupMissing) root.startSetup(false)
+              else if (root.adminState === "enabled" && !root.updateRequired)
+                root.runTransition("disable")
+              else root.recheck()
             }
           }
         }

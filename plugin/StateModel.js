@@ -8,6 +8,13 @@ function secureState(adminState) {
   return "error"
 }
 
+function setupState(versionChecked, helperPresent, installedVersion, expectedVersion) {
+  if (!versionChecked) return "checking"
+  if (!helperPresent) return "missing"
+  if (installedVersion !== expectedVersion) return "update"
+  return "ready"
+}
+
 function stateLabel(adminState) {
   var state = secureState(adminState)
   if (state === "on") return "Secure Mode ON"
@@ -35,4 +42,3 @@ function actionHint(adminState) {
   if (state === "off") return "turn Secure Mode on"
   return "inspect state"
 }
-

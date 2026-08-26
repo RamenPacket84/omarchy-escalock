@@ -1,5 +1,9 @@
 # Live test report — 2026-08-25
 
+> Historical record: this live cycle predates EscaLock 2.0.0. Its results do
+> not substitute for a 2.0.0 privileged `setup.sh --check` and live transition
+> test.
+
 This report records the pre-publication deployment before it was renamed to
 EscaLock. Legacy executable names and `enabled`/`disabled` CLI output below are
 retained because they are the exact interface that was tested. EscaLock 1.1.0
