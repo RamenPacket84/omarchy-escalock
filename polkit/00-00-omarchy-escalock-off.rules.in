@@ -7,5 +7,18 @@ polkit.addRule(function(action, subject) {
         subject.local && subject.active)
         return polkit.Result.AUTH_SELF;
 
+    // Preserve the active local session's normal systemd-logind power policy.
+    // These actions can only shut down or reboot; they cannot execute a
+    // privileged program. Returning null delegates the decision to logind's
+    // installed policy instead of granting it directly here.
+    if (subject.local && subject.active &&
+        (action.id === "org.freedesktop.login1.power-off" ||
+         action.id === "org.freedesktop.login1.power-off-multiple-sessions" ||
+         action.id === "org.freedesktop.login1.power-off-ignore-inhibit" ||
+         action.id === "org.freedesktop.login1.reboot" ||
+         action.id === "org.freedesktop.login1.reboot-multiple-sessions" ||
+         action.id === "org.freedesktop.login1.reboot-ignore-inhibit"))
+        return null;
+
     return polkit.Result.NO;
 });

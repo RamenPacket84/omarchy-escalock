@@ -122,9 +122,17 @@ Its Administrator-OFF content behaves as follows:
 
 ```text
 configured active local user + enable recovery -> AUTH_SELF
+active local user + shutdown/reboot action      -> fall through
 every other action for configured user          -> NO
 other users                                     -> fall through
 ```
+
+The shutdown/reboot exception is limited to systemd-logind's explicit
+`power-off`, `power-off-multiple-sessions`, `power-off-ignore-inhibit`,
+`reboot`, `reboot-multiple-sessions`, and `reboot-ignore-inhibit` actions.
+EscaLock returns no decision for those actions so the installed system policy
+still controls them. It does not grant a generic command-execution action,
+and the exception does not apply to an inactive or remote session.
 
 Polkit stops at the first non-null rule result. Setup and every status check
 therefore scan both `/etc/polkit-1/rules.d` and

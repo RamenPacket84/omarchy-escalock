@@ -12,15 +12,17 @@ first time.
 
 EscaLock has two user-facing states:
 
-| Widget state | Administrator Mode | General sudo | Generic `pkexec` |
-| --- | --- | --- | --- |
-| Secure Mode **OFF** | ON | Available normally | Handled normally by Omarchy |
-| Secure Mode **ON** | OFF | Managed general grant removed | Denied for the configured user |
+| Widget state | Administrator Mode | General sudo | Generic `pkexec` | Local shutdown/reboot |
+| --- | --- | --- | --- | --- |
+| Secure Mode **OFF** | ON | Available normally | Handled normally by Omarchy | Handled normally |
+| Secure Mode **ON** | OFF | Managed general grant removed | Denied for the configured user | Handled normally |
 
 When Secure Mode turns on, EscaLock preserves the managed sudo grant in a
 root-only directory and activates an early Polkit deny rule. The only EscaLock
 recovery action left available asks for the configured user's own password and
-restores Administrator Mode.
+restores Administrator Mode. Explicit systemd-logind shutdown and reboot
+actions from the active local session continue through the system's normal
+power policy; they do not provide general command execution.
 
 The widget does not remember a preference and assume it succeeded. It reads
 the protected sudo and Polkit state, compares the effective sudo policy with
