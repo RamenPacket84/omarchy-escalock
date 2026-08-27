@@ -11,6 +11,7 @@ readonly config_dir=/etc/omarchy-escalock
 readonly sudoers_dir=/etc/sudoers.d
 readonly sudoers_main=/etc/sudoers
 readonly sudo_conf=/etc/sudo.conf
+readonly wheel_grant=/etc/sudoers.d/00-omarchy-wheel
 readonly policy_file=/usr/share/polkit-1/actions/com.github.andrewbacon.omarchy-escalock.policy
 readonly rule_file=/etc/polkit-1/rules.d/00-00-omarchy-escalock.rules
 readonly rule_basename=00-00-omarchy-escalock.rules
@@ -87,19 +88,82 @@ IFS=: read -r account _ target_uid target_gid _ _ _ <<<"$passwd_entry"
 (( target_uid >= 1000 && target_uid != 65534 )) || fail "target UID must be a normal local user"
 
 grant="$sudoers_dir/00_$target_user"
+grant_mode=dedicated
 expected_rule="$target_user ALL=(ALL) ALL"
+expected_wheel_rule='%wheel ALL=(ALL:ALL) ALL'
+expected_managed_wheel_rule="%wheel, !$target_user ALL=(ALL:ALL) ALL"
+transaction_paths=("${system_paths[@]}" "$grant" "$wheel_grant")
+
+config_grant_mode() {
+  local configured_mode
+
+  configured_mode=$(/usr/bin/sed -n 's/^GRANT_MODE=//p' "$config_dir/config")
+  case "$configured_mode" in
+    "" | dedicated) echo dedicated ;;
+    omarchy-wheel) echo omarchy-wheel ;;
+    *) return 1 ;;
+  esac
+}
 
 config_belongs_to_target() {
-  local expected
-  expected=$'TARGET_USER='"$target_user"$'\nTARGET_UID='"$target_uid"
+  local configured_mode expected legacy_expected
+
   [[ -f $config_dir/config && ! -L $config_dir/config ]] || return 1
-  [[ $(<"$config_dir/config") == "$expected" ]]
+  [[ $(/usr/bin/stat -c '%u:%g:%a' "$config_dir/config") == 0:0:600 ]] || return 1
+  configured_mode=$(config_grant_mode) || return 1
+  expected=$'TARGET_USER='"$target_user"$'\nTARGET_UID='"$target_uid"$'\nGRANT_MODE='"$configured_mode"
+  [[ $(<"$config_dir/config") == "$expected" ]] && return 0
+  legacy_expected=$'TARGET_USER='"$target_user"$'\nTARGET_UID='"$target_uid"
+  [[ $configured_mode == dedicated && $(<"$config_dir/config") == "$legacy_expected" ]]
 }
 
 grant_is_exact() {
   [[ -f $grant && ! -L $grant ]] || return 1
   [[ $(/usr/bin/stat -c '%u:%g:%a' "$grant") == 0:0:440 ]] || return 1
   [[ $(/usr/bin/wc -l < "$grant") == 1 && $(<"$grant") == "$expected_rule" ]]
+}
+
+wheel_grant_is_exact() {
+  local expected=$1
+
+  [[ -f $wheel_grant && ! -L $wheel_grant ]] || return 1
+  [[ $(/usr/bin/stat -c '%u:%g:%a' "$wheel_grant") == 0:0:440 ]] || return 1
+  [[ $(/usr/bin/wc -l < "$wheel_grant") == 1 && $(<"$wheel_grant") == "$expected" ]]
+}
+
+fresh_wheel_migration=false
+
+select_grant_mode() {
+  if [[ -e $config_dir || -L $config_dir ]]; then
+    [[ -d $config_dir && ! -L $config_dir ]] || fail "existing configuration path is unsafe"
+    [[ $(/usr/bin/stat -c '%u:%g:%a' "$config_dir") == 0:0:700 ]] ||
+      fail "existing configuration directory has unsafe ownership or permissions"
+    config_belongs_to_target || fail "existing EscaLock configuration belongs to another account or is invalid"
+    grant_mode=$(config_grant_mode) || fail "existing EscaLock grant mode is invalid"
+  elif grant_is_exact; then
+    grant_mode=dedicated
+  elif [[ ! -e $grant && ! -L $grant ]] && wheel_grant_is_exact "$expected_wheel_rule"; then
+    /usr/bin/id -nG "$target_user" | /usr/bin/grep -qw wheel ||
+      fail "target user is not a member of Omarchy's wheel group: $target_user"
+    grant_mode=omarchy-wheel
+    fresh_wheel_migration=true
+  else
+    fail "no supported general sudo grant was found; expected $grant or $wheel_grant"
+  fi
+
+  if [[ $grant_mode == omarchy-wheel ]]; then
+    expected_rule="$target_user ALL=(ALL:ALL) ALL"
+    if [[ $fresh_wheel_migration == false ]]; then
+      grant_is_exact || fail "managed per-user sudo grant is missing, unsafe, or modified: $grant"
+      wheel_grant_is_exact "$expected_managed_wheel_rule" ||
+        fail "managed Omarchy wheel grant is missing, unsafe, or modified: $wheel_grant"
+    else
+      echo "Detected Omarchy shared wheel grant; only $target_user will be isolated for Secure Mode."
+    fi
+  else
+    expected_rule="$target_user ALL=(ALL) ALL"
+    grant_is_exact || fail "expected dedicated sudo grant is missing, unsafe, or modified: $grant"
+  fi
 }
 
 check_sudo_policy_backend() {
@@ -198,29 +262,90 @@ render_templates() {
   /usr/bin/chmod 0644 "$destination/rule.on" "$destination/rule.off"
 }
 
+render_sudo_templates() {
+  local destination=$1
+
+  /usr/bin/install -d -o root -g root -m 0700 "$destination"
+  /usr/bin/printf '%s\n' "$expected_rule" > "$destination/sudoers.template"
+  /usr/bin/chown root:root "$destination/sudoers.template"
+  /usr/bin/chmod 0440 "$destination/sudoers.template"
+  if [[ $grant_mode == omarchy-wheel ]]; then
+    /usr/bin/printf '%s\n' "$expected_wheel_rule" > "$destination/omarchy-wheel.original"
+    /usr/bin/printf '%s\n' "$expected_managed_wheel_rule" > "$destination/omarchy-wheel.managed"
+    /usr/bin/chown root:root "$destination/omarchy-wheel.original" "$destination/omarchy-wheel.managed"
+    /usr/bin/chmod 0440 "$destination/omarchy-wheel.original" "$destination/omarchy-wheel.managed"
+  fi
+}
+
 create_policy_snapshots() {
   local destination=$1
   local filter="user=$target_user"
-  local managed_count general_count command executable basename delegation_kind
+  local managed_count wheel_count general_count command executable basename delegation_kind
 
   /usr/bin/cvtsudoers -f JSON -e -M -m "$filter" "$sudoers_main" |
-    /usr/bin/jq -S . > "$destination/sudo-policy.enabled.json"
+    /usr/bin/jq -S . > "$destination/sudo-policy.current.json"
 
-  managed_count=$(/usr/bin/jq --arg user "$target_user" '
+  if [[ $grant_mode == dedicated ]]; then
+    /usr/bin/cp -- "$destination/sudo-policy.current.json" "$destination/sudo-policy.enabled.json"
+  elif [[ $fresh_wheel_migration == true ]]; then
+    wheel_count=$(/usr/bin/jq '
+      [
+        .User_Specs[]?
+        | select(.User_List == [{"usergroup": "wheel"}])
+        | select(.Host_List == [{"hostname": "ALL"}])
+        | .Cmnd_Specs[]?
+        | select((.runasusers // []) == [{"username": "ALL"}])
+        | select((.runasgroups // []) == [{"usergroup": "ALL"}])
+        | select(.Commands == [{"command": "ALL"}])
+      ] | length
+    ' "$destination/sudo-policy.current.json")
+    [[ $wheel_count == 1 ]] ||
+      fail "the effective sudo policy does not contain exactly one Omarchy wheel grant"
+    /usr/bin/jq -S --arg user "$target_user" '
+      def controlled_wheel:
+        (.User_List == [{"usergroup": "wheel"}]) and
+        (.Host_List == [{"hostname": "ALL"}]) and
+        (.Cmnd_Specs | length == 1) and
+        (.Cmnd_Specs[0].runasusers // [] == [{"username": "ALL"}]) and
+        (.Cmnd_Specs[0].runasgroups // [] == [{"usergroup": "ALL"}]) and
+        (.Cmnd_Specs[0].Commands == [{"command": "ALL"}]);
+      .User_Specs |= [
+        .[]
+        | if controlled_wheel then
+            (.User_List += [{"username": $user, "negated": true}]),
+            (.User_List = [{"username": $user}])
+          else . end
+      ]
+    ' "$destination/sudo-policy.current.json" > "$destination/sudo-policy.enabled.json"
+  else
+    /usr/bin/cp -- "$destination/sudo-policy.current.json" "$destination/sudo-policy.enabled.json"
+  fi
+
+  managed_count=$(/usr/bin/jq --arg user "$target_user" --arg mode "$grant_mode" '
     [
       .User_Specs[]?
       | select(.User_List == [{"username": $user}])
       | select(.Host_List == [{"hostname": "ALL"}])
       | .Cmnd_Specs[]?
       | select((.runasusers // []) == [{"username": "ALL"}])
-      | select(((.runasgroups // []) | length) == 0)
+      | select(if $mode == "omarchy-wheel" then
+                 (.runasgroups // []) == [{"usergroup": "ALL"}]
+               else ((.runasgroups // []) | length) == 0 end)
       | select(.Commands == [{"command": "ALL"}])
     ] | length
   ' "$destination/sudo-policy.enabled.json")
   [[ $managed_count == 1 ]] || fail "the effective sudo policy does not contain exactly one managed general grant"
 
-  general_count=$(/usr/bin/jq '
-    [.User_Specs[]?.Cmnd_Specs[]?.Commands[]? | select(.command == "ALL")] | length
+  general_count=$(/usr/bin/jq --arg user "$target_user" '
+    [
+      .User_Specs[]?
+      | select(.User_List != [
+          {"usergroup": "wheel"},
+          {"username": $user, "negated": true}
+        ])
+      | .Cmnd_Specs[]?.Commands[]?
+      | select(.command == "ALL")
+    ] | length
   ' "$destination/sudo-policy.enabled.json")
   [[ $general_count == 1 ]] ||
     fail "another matching sudo rule grants or manipulates ALL; refusing an incomplete Secure Mode"
@@ -252,10 +377,12 @@ create_policy_snapshots() {
   done < <(/usr/bin/jq -r '.User_Specs[]?.Cmnd_Specs[]?.Commands[]?.command' \
     "$destination/sudo-policy.enabled.json")
 
-  /usr/bin/jq -S --arg user "$target_user" '
+  /usr/bin/jq -S --arg user "$target_user" --arg mode "$grant_mode" '
     def controlled:
       ((.runasusers // []) == [{"username": "ALL"}]) and
-      (((.runasgroups // []) | length) == 0) and
+      (if $mode == "omarchy-wheel" then
+         (.runasgroups // []) == [{"usergroup": "ALL"}]
+       else ((.runasgroups // []) | length) == 0 end) and
       (.Commands == [{"command": "ALL"}]);
     .User_Specs |= map(
       if (.User_List == [{"username": $user}]) and
@@ -265,6 +392,7 @@ create_policy_snapshots() {
     )
     | .User_Specs |= map(select((.Cmnd_Specs | length) > 0))
   ' "$destination/sudo-policy.enabled.json" > "$destination/sudo-policy.disabled.json"
+  /usr/bin/rm -f -- "$destination/sudo-policy.current.json"
   /usr/bin/chown root:root "$destination"/sudo-policy.*.json
   /usr/bin/chmod 0600 "$destination"/sudo-policy.*.json
 }
@@ -278,8 +406,14 @@ preflight() {
   command -v /usr/bin/pkaction >/dev/null || fail "pkaction is required"
   command -v /usr/bin/visudo >/dev/null || fail "visudo is required"
   check_sudo_policy_backend
-  grant_is_exact || fail "expected dedicated sudo grant is missing, unsafe, or modified: $grant"
-  /usr/bin/visudo -cf "$grant" >/dev/null || fail "the managed grant fails visudo validation"
+  select_grant_mode
+  render_sudo_templates "$work"
+  /usr/bin/visudo -cf "$work/sudoers.template" >/dev/null ||
+    fail "the prospective managed grant fails visudo validation"
+  if [[ $grant_mode == omarchy-wheel ]]; then
+    /usr/bin/visudo -cf "$work/omarchy-wheel.managed" >/dev/null ||
+      fail "the prospective Omarchy wheel grant fails visudo validation"
+  fi
   /usr/bin/visudo -c >/dev/null || fail "the complete sudoers policy is invalid"
   check_rule_precedence
   render_templates "$work"
@@ -290,7 +424,7 @@ backup_system_files() {
   local destination=$1 path
 
   /usr/bin/install -d -o root -g root -m 0700 "$destination"
-  for path in "${system_paths[@]}"; do
+  for path in "${transaction_paths[@]}"; do
     if [[ -f $path && ! -L $path ]]; then
       /usr/bin/cp -a --parents -- "$path" "$destination"
     elif [[ -e $path || -L $path ]]; then
@@ -302,7 +436,7 @@ backup_system_files() {
 restore_system_files() {
   local source=$1 path saved
 
-  for path in "${system_paths[@]}"; do
+  for path in "${transaction_paths[@]}"; do
     /usr/bin/rm -f -- "$path"
     saved="$source$path"
     if [[ -f $saved && ! -L $saved ]]; then
@@ -377,7 +511,6 @@ if [[ $operation == check || $operation == install ]]; then
   timestamp=$(/usr/bin/date -u +%Y%m%dT%H%M%SZ)
   backup_dir="$backup_root/$timestamp-install-$$"
   /usr/bin/install -d -o root -g root -m 0700 "$backup_dir"
-  /usr/bin/install -o root -g root -m 0440 "$grant" "$backup_dir/00_$target_user.enabled"
   if [[ -d $config_dir && ! -L $config_dir ]]; then
     /usr/bin/cp -a -- "$config_dir" "$backup_dir/config.before"
   fi
@@ -396,13 +529,25 @@ if [[ $operation == check || $operation == install ]]; then
   trap rollback_install EXIT
 
   /usr/bin/install -d -o root -g root -m 0700 "$config_dir"
-  /usr/bin/printf 'TARGET_USER=%s\nTARGET_UID=%s\n' "$target_user" "$target_uid" > "$work/config"
+  /usr/bin/printf 'TARGET_USER=%s\nTARGET_UID=%s\nGRANT_MODE=%s\n' \
+    "$target_user" "$target_uid" "$grant_mode" > "$work/config"
   /usr/bin/printf 'VERSION=%s\nSOURCE_COMMIT=%s\nPAYLOAD_SHA256=%s\n' \
     "$(/usr/bin/jq -er '.version' "$stage/manifest.json")" "$source_commit" "$payload_digest" \
     > "$work/install-metadata"
   /usr/bin/install -o root -g root -m 0600 "$work/config" "$config_dir/config"
   /usr/bin/install -o root -g root -m 0600 "$work/install-metadata" "$config_dir/install-metadata"
-  /usr/bin/install -o root -g root -m 0440 "$grant" "$config_dir/sudoers.template"
+  /usr/bin/install -o root -g root -m 0440 "$work/sudoers.template" "$config_dir/sudoers.template"
+  if [[ $grant_mode == omarchy-wheel ]]; then
+    /usr/bin/install -o root -g root -m 0440 "$work/omarchy-wheel.original" \
+      "$config_dir/omarchy-wheel.original"
+    /usr/bin/install -o root -g root -m 0440 "$work/omarchy-wheel.managed" \
+      "$config_dir/omarchy-wheel.managed"
+    /usr/bin/install -o root -g root -m 0440 "$work/sudoers.template" "$grant"
+    /usr/bin/install -o root -g root -m 0440 "$work/omarchy-wheel.managed" "$wheel_grant"
+  else
+    /usr/bin/rm -f -- "$config_dir/omarchy-wheel.original" "$config_dir/omarchy-wheel.managed"
+  fi
+  /usr/bin/visudo -c >/dev/null || fail "sudoers became invalid while preparing the managed grant"
   /usr/bin/install -o root -g root -m 0644 "$work/rule.on" \
     "$config_dir/00-00-omarchy-escalock-on.rules.template"
   /usr/bin/install -o root -g root -m 0644 "$work/rule.off" \
@@ -446,6 +591,18 @@ if [[ $operation == uninstall ]]; then
   [[ -z $stage && -z $source_commit && -z $payload_digest ]] || usage
   [[ -d $config_dir && ! -L $config_dir ]] || fail "trusted EscaLock configuration is missing"
   config_belongs_to_target || fail "EscaLock is configured for another account"
+  grant_mode=$(config_grant_mode) || fail "EscaLock grant mode is invalid"
+  if [[ $grant_mode == omarchy-wheel ]]; then
+    expected_rule="$target_user ALL=(ALL:ALL) ALL"
+    [[ -f $config_dir/omarchy-wheel.original && ! -L $config_dir/omarchy-wheel.original ]] ||
+      fail "protected original Omarchy wheel grant is missing"
+    [[ -f $config_dir/omarchy-wheel.managed && ! -L $config_dir/omarchy-wheel.managed ]] ||
+      fail "protected managed Omarchy wheel grant is missing"
+    /usr/bin/cmp -s -- "$wheel_grant" "$config_dir/omarchy-wheel.managed" ||
+      fail "live Omarchy wheel grant differs from the protected template"
+  else
+    expected_rule="$target_user ALL=(ALL) ALL"
+  fi
   [[ -x $helper ]] || fail "installed helper is missing"
   current_state=$(PKEXEC_UID="$target_uid" "$helper" status) || fail "helper could not verify state"
   [[ $current_state == enabled ]] || fail "Administrator Mode must be ON before uninstall"
@@ -457,7 +614,6 @@ if [[ $operation == uninstall ]]; then
   backup_dir="$backup_root/$timestamp-uninstall-$$"
   /usr/bin/install -d -o root -g root -m 0700 "$backup_dir"
   /usr/bin/cp -a -- "$config_dir" "$backup_dir/config"
-  /usr/bin/install -o root -g root -m 0440 "$grant" "$backup_dir/00_$target_user.restored"
   backup_system_files "$backup_dir/system"
 
   uninstall_committed=false
@@ -472,11 +628,23 @@ if [[ $operation == uninstall ]]; then
   }
   trap rollback_uninstall EXIT
 
+  if [[ $grant_mode == omarchy-wheel ]]; then
+    /usr/bin/install -o root -g root -m 0440 "$config_dir/omarchy-wheel.original" "$wheel_grant"
+    /usr/bin/visudo -c >/dev/null || fail "sudoers became invalid while restoring Omarchy's wheel grant"
+    /usr/bin/rm -f -- "$grant"
+    /usr/bin/visudo -c >/dev/null || fail "sudoers became invalid while removing the managed per-user grant"
+  fi
+
   /usr/bin/rm -f -- "$rule_file" "$legacy_recovery_rule" "$legacy_off_rule" \
     "$legacy_manage_rule" "$policy_file" "$helper" "$cli"
   /usr/bin/rm -rf -- "$config_dir"
   /usr/bin/visudo -c >/dev/null || fail "sudoers became invalid after uninstall"
-  [[ -f $grant ]] || fail "restored sudo grant disappeared"
+  if [[ $grant_mode == omarchy-wheel ]]; then
+    wheel_grant_is_exact "$expected_wheel_rule" || fail "restored Omarchy wheel grant is invalid"
+    [[ ! -e $grant && ! -L $grant ]] || fail "managed per-user grant remains after uninstall"
+  else
+    [[ -f $grant ]] || fail "restored sudo grant disappeared"
+  fi
   /usr/bin/rm -f -- "$maintainer"
 
   uninstall_committed=true

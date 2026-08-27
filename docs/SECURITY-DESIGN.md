@@ -6,7 +6,8 @@ EscaLock controls subsequent general-purpose elevation for one configured
 local desktop user without changing supplementary groups or requiring a new
 login. It coordinates:
 
-- the dedicated `/etc/sudoers.d/00_USER` general grant;
+- a dedicated `/etc/sudoers.d/00_USER` general grant, either pre-existing or
+  safely derived from Omarchy's standard shared wheel grant;
 - the complete effective sudo policy matching that user; and
 - Polkit decisions for that user.
 
@@ -150,11 +151,26 @@ restores the previous rule.
 
 ## Effective sudo policy
 
-Setup requires the exact root-owned mode-0440 managed grant:
+Setup accepts either an exact root-owned mode-0440 dedicated grant:
 
 ```text
 USER ALL=(ALL) ALL
 ```
+
+or Omarchy's exact standard shared grant:
+
+```text
+%wheel ALL=(ALL:ALL) ALL
+```
+
+For the shared layout, setup preserves the original rule and replaces its live
+content with `%wheel, !USER ALL=(ALL:ALL) ALL`. It then creates the exact
+per-user `USER ALL=(ALL:ALL) ALL` grant that transitions manage. Sudo applies
+matching entries in order and the negated user-list member removes only the
+configured account from the shared rule. Other wheel users remain covered,
+and later executable-scoped Omarchy rules remain available. The original and
+managed shared rules are protected templates and uninstall restores the
+original byte-for-byte.
 
 It validates the complete policy with `visudo`, rejects a non-sudoers policy
 backend in `/etc/sudo.conf`, and converts the policy matching the target user
@@ -180,6 +196,8 @@ instead of claiming Secure Mode ON.
 Internal helper state `enabled` means Administrator Mode ON and requires:
 
 - exact live managed grant and absent disabled copy;
+- for a migrated Omarchy wheel layout, the exact live exclusion rule and both
+  protected original/managed templates;
 - exact Administrator-ON Polkit rule;
 - exact policy and rule templates, custom policy, helper metadata, rule
   precedence, and protected file modes; and
@@ -188,6 +206,7 @@ Internal helper state `enabled` means Administrator Mode ON and requires:
 Internal helper state `disabled` means Administrator Mode OFF and requires:
 
 - absent managed grant and exact protected disabled copy;
+- the same exact migrated-wheel state when that layout is configured;
 - exact Administrator-OFF Polkit rule;
 - the same infrastructure checks; and
 - live sudo JSON equal to the disabled snapshot.
@@ -216,5 +235,6 @@ established.
 - The widget refuses transitions when its expected version differs from the
   installed helper version.
 - Uninstall first restores Administrator Mode through the normal authenticated
-  action, verifies the grant/template and complete sudoers policy, then removes
-  fixed system paths transactionally.
+  action, verifies the grant/template and complete sudoers policy, restores a
+  migrated shared wheel grant when applicable, then removes fixed system paths
+  transactionally.

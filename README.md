@@ -39,13 +39,20 @@ state.
 
 - Omarchy 4.x
 - A normal local desktop account
-- An existing dedicated general sudo grant at `/etc/sudoers.d/00_USER`
+- Either Omarchy's standard `/etc/sudoers.d/00-omarchy-wheel` general grant or
+  an existing dedicated grant at `/etc/sudoers.d/00_USER`
 - The standard build and validation tools checked by `setup.sh`
 
 Setup reports a clear error without installing anything if the system is not
 compatible. EscaLock does not install packages or call a package manager. Run
 all commands as the desktop user, not from a root shell and not by prefixing
 the scripts with `sudo`.
+
+On a fresh Omarchy installation, setup preserves the original shared wheel
+grant, changes its live user list to exclude only the configured account, and
+creates a protected per-user grant for EscaLock to toggle. Other wheel users
+remain covered by Omarchy's shared rule. Uninstall restores the original wheel
+grant exactly and removes the EscaLock-created per-user grant.
 
 ## Install
 
@@ -181,7 +188,8 @@ The command safely performs the following sequence:
 2. refuses to continue if state is inconsistent;
 3. verifies the restored sudo grant and complete sudoers policy;
 4. creates a root-only uninstall backup;
-5. removes only EscaLock's fixed system paths and validates sudoers again; and
+5. restores Omarchy's original shared wheel grant when setup migrated it,
+   removes only EscaLock's fixed paths, and validates sudoers again; and
 6. asks Omarchy to remove the user-owned plugin checkout.
 
 Do not run `sudo omarchy-escalock uninstall`, and do not delete the checkout or
@@ -216,6 +224,11 @@ as root:
 visudo -cf /etc/omarchy-escalock/sudoers.template
 install -o root -g root -m 0440 \
   /etc/omarchy-escalock/sudoers.template /etc/sudoers.d/00_USER
+if grep -Fxq 'GRANT_MODE=omarchy-wheel' /etc/omarchy-escalock/config; then
+  install -o root -g root -m 0440 \
+    /etc/omarchy-escalock/omarchy-wheel.managed \
+    /etc/sudoers.d/00-omarchy-wheel
+fi
 visudo -c
 install -o root -g root -m 0644 \
   /etc/omarchy-escalock/00-00-omarchy-escalock-on.rules.template \

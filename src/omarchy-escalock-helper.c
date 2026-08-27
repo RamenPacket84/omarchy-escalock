@@ -30,6 +30,8 @@
 #define CONFIG_FILE CONFIG_DIR "/config"
 #define SUDO_TEMPLATE CONFIG_DIR "/sudoers.template"
 #define SUDO_DISABLED CONFIG_DIR "/sudoers.disabled"
+#define WHEEL_ORIGINAL_TEMPLATE CONFIG_DIR "/omarchy-wheel.original"
+#define WHEEL_MANAGED_TEMPLATE CONFIG_DIR "/omarchy-wheel.managed"
 #define RULE_ON_TEMPLATE CONFIG_DIR "/00-00-omarchy-escalock-on.rules.template"
 #define RULE_OFF_TEMPLATE CONFIG_DIR "/00-00-omarchy-escalock-off.rules.template"
 #define POLICY_TEMPLATE CONFIG_DIR "/com.github.andrewbacon.omarchy-escalock.policy.template"
@@ -39,6 +41,7 @@
 
 #define SUDOERS_MAIN "/etc/sudoers"
 #define SUDOERS_DIR "/etc/sudoers.d"
+#define WHEEL_GRANT SUDOERS_DIR "/00-omarchy-wheel"
 #define RULE_FILE "/etc/polkit-1/rules.d/00-00-omarchy-escalock.rules"
 #define ETC_RULES_DIR "/etc/polkit-1/rules.d"
 #define SHARE_RULES_DIR "/usr/share/polkit-1/rules.d"
@@ -57,12 +60,18 @@
 #define JQ "/usr/bin/jq"
 #define RULE_BASENAME "00-00-omarchy-escalock.rules"
 #define MAX_FILE_SIZE (1024U * 1024U)
-#define ESCALOCK_VERSION "2.0.0"
+#define ESCALOCK_VERSION "2.0.1"
+
+enum grant_mode {
+    GRANT_DEDICATED,
+    GRANT_OMARCHY_WHEEL
+};
 
 struct config {
     char user[128];
     uid_t uid;
     char grant_path[PATH_MAX];
+    enum grant_mode grant_mode;
 };
 
 struct blob {
@@ -82,6 +91,8 @@ static char path_config_dir[PATH_MAX];
 static char path_config[PATH_MAX];
 static char path_sudo_template[PATH_MAX];
 static char path_sudo_disabled[PATH_MAX];
+static char path_wheel_original_template[PATH_MAX];
+static char path_wheel_managed_template[PATH_MAX];
 static char path_rule_on_template[PATH_MAX];
 static char path_rule_off_template[PATH_MAX];
 static char path_policy_template[PATH_MAX];
@@ -90,6 +101,7 @@ static char path_sudo_policy_disabled[PATH_MAX];
 static char path_lock[PATH_MAX];
 static char path_sudoers_main[PATH_MAX];
 static char path_sudoers_dir[PATH_MAX];
+static char path_wheel_grant[PATH_MAX];
 static char path_rule_file[PATH_MAX];
 static char path_etc_rules_dir[PATH_MAX];
 static char path_share_rules_dir[PATH_MAX];
@@ -143,6 +155,10 @@ static void initialize_paths(void)
     set_path(path_config, sizeof(path_config), CONFIG_FILE);
     set_path(path_sudo_template, sizeof(path_sudo_template), SUDO_TEMPLATE);
     set_path(path_sudo_disabled, sizeof(path_sudo_disabled), SUDO_DISABLED);
+    set_path(path_wheel_original_template, sizeof(path_wheel_original_template),
+             WHEEL_ORIGINAL_TEMPLATE);
+    set_path(path_wheel_managed_template, sizeof(path_wheel_managed_template),
+             WHEEL_MANAGED_TEMPLATE);
     set_path(path_rule_on_template, sizeof(path_rule_on_template), RULE_ON_TEMPLATE);
     set_path(path_rule_off_template, sizeof(path_rule_off_template), RULE_OFF_TEMPLATE);
     set_path(path_policy_template, sizeof(path_policy_template), POLICY_TEMPLATE);
@@ -151,6 +167,7 @@ static void initialize_paths(void)
     set_path(path_lock, sizeof(path_lock), LOCK_FILE);
     set_path(path_sudoers_main, sizeof(path_sudoers_main), SUDOERS_MAIN);
     set_path(path_sudoers_dir, sizeof(path_sudoers_dir), SUDOERS_DIR);
+    set_path(path_wheel_grant, sizeof(path_wheel_grant), WHEEL_GRANT);
     set_path(path_rule_file, sizeof(path_rule_file), RULE_FILE);
     set_path(path_etc_rules_dir, sizeof(path_etc_rules_dir), ETC_RULES_DIR);
     set_path(path_share_rules_dir, sizeof(path_share_rules_dir), SHARE_RULES_DIR);
@@ -306,8 +323,10 @@ static bool load_config(struct config *cfg)
     struct blob content;
     char *first_end;
     char *second_end;
+    char *third_end;
     const char user_prefix[] = "TARGET_USER=";
     const char uid_prefix[] = "TARGET_UID=";
+    const char mode_prefix[] = "GRANT_MODE=";
     struct passwd *pw;
 
     memset(cfg, 0, sizeof(*cfg));
@@ -321,7 +340,7 @@ static bool load_config(struct config *cfg)
     }
     *first_end = '\0';
     second_end = strchr(first_end + 1, '\n');
-    if (second_end == NULL || second_end[1] != '\0' ||
+    if (second_end == NULL ||
         strncmp(content.data, user_prefix, sizeof(user_prefix) - 1U) != 0 ||
         strncmp(first_end + 1, uid_prefix, sizeof(uid_prefix) - 1U) != 0) {
         free_blob(&content);
@@ -334,6 +353,24 @@ static bool load_config(struct config *cfg)
         !parse_uid(first_end + 1 + sizeof(uid_prefix) - 1U, &cfg->uid)) {
         free_blob(&content);
         return false;
+    }
+    cfg->grant_mode = GRANT_DEDICATED;
+    if (second_end[1] != '\0') {
+        third_end = strchr(second_end + 1, '\n');
+        if (third_end == NULL || third_end[1] != '\0' ||
+            strncmp(second_end + 1, mode_prefix, sizeof(mode_prefix) - 1U) != 0) {
+            free_blob(&content);
+            return false;
+        }
+        *third_end = '\0';
+        if (strcmp(second_end + 1 + sizeof(mode_prefix) - 1U,
+                   "omarchy-wheel") == 0) {
+            cfg->grant_mode = GRANT_OMARCHY_WHEEL;
+        } else if (strcmp(second_end + 1 + sizeof(mode_prefix) - 1U,
+                          "dedicated") != 0) {
+            free_blob(&content);
+            return false;
+        }
     }
     free_blob(&content);
 
@@ -348,10 +385,48 @@ static bool load_config(struct config *cfg)
 static bool expected_sudo_template(const struct config *cfg, const struct blob *blob)
 {
     char expected[256];
-    int len = snprintf(expected, sizeof(expected), "%s ALL=(ALL) ALL\n", cfg->user);
+    int len;
+
+    if (cfg->grant_mode == GRANT_OMARCHY_WHEEL)
+        len = snprintf(expected, sizeof(expected), "%s ALL=(ALL:ALL) ALL\n",
+                       cfg->user);
+    else
+        len = snprintf(expected, sizeof(expected), "%s ALL=(ALL) ALL\n",
+                       cfg->user);
 
     return len > 0 && (size_t)len == blob->len &&
            memcmp(expected, blob->data, blob->len) == 0;
+}
+
+static bool wheel_grant_layout_good(const struct config *cfg)
+{
+    struct blob original = { 0 };
+    struct blob managed = { 0 };
+    const char expected_original[] = "%wheel ALL=(ALL:ALL) ALL\n";
+    char expected_managed[256];
+    int managed_len;
+    bool good;
+
+    if (cfg->grant_mode == GRANT_DEDICATED)
+        return path_absent(path_wheel_original_template) &&
+               path_absent(path_wheel_managed_template);
+
+    if (!load_file(path_wheel_original_template, 0440, &original) ||
+        !load_file(path_wheel_managed_template, 0440, &managed)) {
+        free_blob(&original);
+        free_blob(&managed);
+        return false;
+    }
+    managed_len = snprintf(expected_managed, sizeof(expected_managed),
+                           "%%wheel, !%s ALL=(ALL:ALL) ALL\n", cfg->user);
+    good = original.len == sizeof(expected_original) - 1U &&
+           memcmp(original.data, expected_original, original.len) == 0 &&
+           managed_len > 0 && (size_t)managed_len == managed.len &&
+           memcmp(managed.data, expected_managed, managed.len) == 0 &&
+           file_equals_blob(path_wheel_grant, 0440, &managed);
+    free_blob(&managed);
+    free_blob(&original);
+    return good;
 }
 
 static bool name_has_suffix(const char *name, const char *suffix)
@@ -445,7 +520,7 @@ static enum mode_state current_state(const struct config *cfg)
     bool rule_on_good;
     bool rule_off_good;
 
-    if (!infrastructure_files_good() ||
+    if (!infrastructure_files_good() || !wheel_grant_layout_good(cfg) ||
         !load_file(path_sudo_template, 0440, &sudo_template))
         return MODE_INCONSISTENT;
     if (!expected_sudo_template(cfg, &sudo_template)) {
@@ -1089,6 +1164,8 @@ static void verify_disable_preflight(const struct config *cfg)
 
     if (!infrastructure_files_good())
         fail("recovery infrastructure is missing, modified, or has unsafe permissions");
+    if (!wheel_grant_layout_good(cfg))
+        fail("the Omarchy wheel grant no longer matches the protected installation state");
     if (!actions_registered())
         fail("custom Polkit actions are not registered");
     if (!load_file(path_sudo_template, 0440, &sudo_template) ||

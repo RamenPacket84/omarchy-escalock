@@ -20,18 +20,48 @@ printf '%s\n' '#!/bin/bash' \
   '  [[ $argument != user=* ]] || filter_user=${argument#user=}' \
   'done' \
   'includedir=$(/usr/bin/awk '\''$1 == "@includedir" { print $2 }'\'' "$main")' \
-  'general=false' \
-  'if [[ -d $includedir ]]; then' \
-  '  for file in "$includedir"/*; do' \
-  '    [[ -f $file && ${file##*/} != *.* && ${file##*/} != *"~" ]] || continue' \
-  '    if /usr/bin/grep -Fxq -- "$filter_user ALL=(ALL) ALL" "$file"; then general=true; fi' \
-  '  done' \
-  'fi' \
-  'if [[ $general == true ]]; then' \
-  '  /usr/bin/printf '\''{"User_Specs":[{"User_List":[{"username":"%s"}],"Host_List":[{"hostname":"ALL"}],"Cmnd_Specs":[{"runasusers":[{"username":"ALL"}],"Commands":[{"command":"ALL"}]}]}]}\n'\'' "$filter_user"' \
-  'else' \
-  '  /usr/bin/printf '\''{"User_Specs":[]}\n'\''' \
-  'fi' > "$fake_cvtsudoers"
+  'group_mode=none' \
+  'direct_mode=none' \
+  'direct_count=0' \
+  'wheel_grant="$includedir/00-omarchy-wheel"' \
+  'if [[ -f $wheel_grant ]] && /usr/bin/grep -Fxq -- "%wheel ALL=(ALL:ALL) ALL" "$wheel_grant"; then group_mode=original; fi' \
+  'if [[ -f $wheel_grant ]] && /usr/bin/grep -Fxq -- "%wheel, !$filter_user ALL=(ALL:ALL) ALL" "$wheel_grant"; then group_mode=managed; fi' \
+  'for file in "$includedir"/*; do' \
+  '  [[ -f $file && ${file##*/} != *.* && ${file##*/} != *"~" ]] || continue' \
+  '  if /usr/bin/grep -Fxq -- "$filter_user ALL=(ALL) ALL" "$file"; then direct_mode=legacy; ((direct_count += 1)); fi' \
+  '  if /usr/bin/grep -Fxq -- "$filter_user ALL=(ALL:ALL) ALL" "$file"; then direct_mode=wheel; ((direct_count += 1)); fi' \
+  'done' \
+  '/usr/bin/jq -n --arg user "$filter_user" --arg group "$group_mode" --arg direct "$direct_mode" --argjson count "$direct_count" '\''
+    def command_spec($with_groups):
+      {
+        "Host_List": [{"hostname": "ALL"}],
+        "Cmnd_Specs": [
+          ({
+            "runasusers": [{"username": "ALL"}],
+            "Commands": [{"command": "ALL"}]
+          } + if $with_groups then
+                {"runasgroups": [{"usergroup": "ALL"}]}
+              else {} end)
+        ]
+      };
+    {
+      "User_Specs": [
+        (if $group == "original" then
+           {"User_List": [{"usergroup": "wheel"}]} + command_spec(true)
+         elif $group == "managed" then
+           {"User_List": [
+             {"usergroup": "wheel"},
+             {"username": $user, "negated": true}
+           ]} + command_spec(true)
+         else empty end),
+        (if $count > 0 and $direct == "legacy" then
+            {"User_List": [{"username": $user}]} + command_spec(false)
+          elif $count > 0 and $direct == "wheel" then
+            {"User_List": [{"username": $user}]} + command_spec(true)
+          else empty end)
+      ]
+    }
+  '\''' > "$fake_cvtsudoers"
 chmod 0755 "$fake_cvtsudoers"
 
 /usr/bin/gcc -DTESTING -DCVTSUDOERS="\"$fake_cvtsudoers\"" -O1 -g \
@@ -52,6 +82,7 @@ chmod 0700 "$test_root/etc/omarchy-escalock"
 config_dir="$test_root/etc/omarchy-escalock"
 grant="$test_root/etc/sudoers.d/00_$target_user"
 disabled="$config_dir/sudoers.disabled"
+wheel_grant="$test_root/etc/sudoers.d/00-omarchy-wheel"
 rule_file="$test_root/etc/polkit-1/rules.d/00-00-omarchy-escalock.rules"
 
 printf 'TARGET_USER=%s\nTARGET_UID=%s\n' "$target_user" "$target_uid" > "$config_dir/config"
@@ -102,13 +133,22 @@ run_mutation() {
 }
 
 [[ $(run_helper status) == enabled ]]
-[[ $(run_helper version) == 2.0.0 ]]
+[[ $(run_helper version) == 2.0.1 ]]
 
 printf 'TARGET_USER=%s\nTARGET_UID=+%s\n' "$target_user" "$target_uid" > "$config_dir/config"
 [[ $(run_helper status; true) == inconsistent ]]
 printf 'TARGET_USER=%s\nTARGET_UID=%s\n' "$target_user" "$target_uid" > "$config_dir/config"
 chmod 0600 "$config_dir/config"
 [[ $(run_helper status) == enabled ]]
+
+printf 'TARGET_USER=%s\nTARGET_UID=%s\nGRANT_MODE=dedicated\n' \
+  "$target_user" "$target_uid" > "$config_dir/config"
+[[ $(run_helper status) == enabled ]]
+printf 'TARGET_USER=%s\nTARGET_UID=%s\nGRANT_MODE=unexpected\n' \
+  "$target_user" "$target_uid" > "$config_dir/config"
+[[ $(run_helper status; true) == inconsistent ]]
+printf 'TARGET_USER=%s\nTARGET_UID=%s\nGRANT_MODE=dedicated\n' \
+  "$target_user" "$target_uid" > "$config_dir/config"
 
 if run_helper unexpected >/dev/null 2>&1; then
   echo "helper accepted an unexpected operation" >&2
@@ -171,5 +211,43 @@ cp "$config_dir/00-00-omarchy-escalock-off.rules.template" "$rule_file"
 chmod 0644 "$rule_file"
 [[ $(run_helper status) == disabled ]]
 run_mutation enable >/dev/null
+
+printf 'TARGET_USER=%s\nTARGET_UID=%s\nGRANT_MODE=omarchy-wheel\n' \
+  "$target_user" "$target_uid" > "$config_dir/config"
+chmod 0640 "$config_dir/sudoers.template" "$grant"
+printf '%s ALL=(ALL:ALL) ALL\n' "$target_user" > "$config_dir/sudoers.template"
+cp "$config_dir/sudoers.template" "$grant"
+printf '%%wheel ALL=(ALL:ALL) ALL\n' > "$config_dir/omarchy-wheel.original"
+printf '%%wheel, !%s ALL=(ALL:ALL) ALL\n' "$target_user" > "$config_dir/omarchy-wheel.managed"
+cp "$config_dir/omarchy-wheel.managed" "$wheel_grant"
+chmod 0440 "$config_dir/sudoers.template" "$grant" \
+  "$config_dir/omarchy-wheel.original" "$config_dir/omarchy-wheel.managed" "$wheel_grant"
+"$fake_cvtsudoers" -f JSON -e -M -m "user=$target_user" \
+  "$test_root/etc/sudoers" 2>/dev/null | /usr/bin/jq -S . \
+  > "$config_dir/sudo-policy.enabled.json"
+mv "$grant" "$disabled"
+"$fake_cvtsudoers" -f JSON -e -M -m "user=$target_user" \
+  "$test_root/etc/sudoers" 2>/dev/null | /usr/bin/jq -S . \
+  > "$config_dir/sudo-policy.disabled.json"
+mv "$disabled" "$grant"
+chmod 0600 "$config_dir"/sudo-policy.*.json
+
+[[ $(run_helper status) == enabled ]]
+[[ $(run_mutation disable) == disabled ]]
+[[ ! -e $grant && -f $disabled ]]
+cmp -s "$wheel_grant" "$config_dir/omarchy-wheel.managed"
+[[ $(run_helper status) == disabled ]]
+[[ $(run_mutation enable) == enabled ]]
+[[ -f $grant && ! -e $disabled ]]
+[[ $(run_helper status) == enabled ]]
+
+chmod 0640 "$wheel_grant"
+printf '%%wheel ALL=(ALL:ALL) ALL\n' > "$wheel_grant"
+chmod 0440 "$wheel_grant"
+[[ $(run_helper status; true) == inconsistent ]]
+chmod 0640 "$wheel_grant"
+cp "$config_dir/omarchy-wheel.managed" "$wheel_grant"
+chmod 0440 "$wheel_grant"
+[[ $(run_helper status) == enabled ]]
 
 echo "helper transition tests passed"
