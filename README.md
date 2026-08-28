@@ -193,17 +193,13 @@ checkout and the privileged components:
 
 ```bash
 omarchy-escalock off
-omarchy plugin update andrewbacon.escalock
+omarchy plugin update andrewbacon.escalock --yes
 ~/.config/omarchy/plugins/andrewbacon.escalock/setup.sh
 ```
 
-Review the diff shown by Omarchy before accepting the update. Setup displays
-the new commit and creates another recovery backup before replacing system
-components.
-
-Setup creates a new backup and rolls back to the previous recovery path if the
-upgrade fails. The widget compares its version with the installed helper and
-disables transitions while an update is required.
+Setup displays the new commit, creates a new backup, and rolls back to the
+previous recovery path if the upgrade fails. The widget compares its version
+with the installed helper and disables transitions while an update is required.
 
 ## Uninstall
 
