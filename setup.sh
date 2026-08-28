@@ -9,7 +9,7 @@ readonly omarchy=/usr/share/omarchy/bin/omarchy
 readonly plugin_id=andrewbacon.escalock
 readonly origin_policy="$project_root/lib/source-origin.sh"
 
-target_user=$(/usr/bin/id -un)
+readonly target_user=$(/usr/bin/id -un)
 enable_plugin=false
 check_only=false
 development=false
@@ -21,13 +21,13 @@ fail() {
 
 usage() {
   cat <<'USAGE'
-Usage: ./setup.sh [--user USER] [--enable] [--check] [--upgrade] [--development]
+Usage: ./setup.sh [--enable] [--check] [--development]
 
-Builds and validates the exact Git commit checked out by Omarchy, performs an
-explicit privileged setup, and optionally enables the EscaLock widget.
+Builds and validates the exact local Git HEAD from the plugin checkout,
+performs an explicit privileged setup, and optionally enables the EscaLock
+widget.
 
 --check        Run the privileged preflight without installing system files.
---upgrade      Document that this setup run follows an Omarchy plugin update.
 --development  Use the current working tree instead of Git HEAD. Never use this
                option for a published installation.
 USAGE
@@ -39,20 +39,12 @@ source "$origin_policy"
 
 while (( $# > 0 )); do
   case "$1" in
-    --user)
-      (( $# >= 2 )) || fail "--user requires an argument"
-      target_user=${2:-}
-      shift 2
-      ;;
     --enable)
       enable_plugin=true
       shift
       ;;
-    --check | --dry-run)
+    --check)
       check_only=true
-      shift
-      ;;
-    --upgrade)
       shift
       ;;
     --development)
@@ -71,7 +63,6 @@ done
 
 (( EUID != 0 )) || fail "run setup as the target user, not with sudo"
 [[ $target_user =~ ^[a-z_][a-z0-9_-]*$ ]] || fail "invalid target username"
-[[ $target_user == $(/usr/bin/id -un) ]] || fail "--user must name the account running setup"
 
 for command_path in /usr/bin/awk /usr/bin/cvtsudoers /usr/bin/gcc /usr/bin/git \
   /usr/bin/grep /usr/bin/jq /usr/bin/make /usr/bin/pkaction /usr/bin/pkcheck \

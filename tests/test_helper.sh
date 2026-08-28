@@ -133,7 +133,7 @@ run_mutation() {
 }
 
 [[ $(run_helper status) == enabled ]]
-[[ $(run_helper version) == 2.0.2 ]]
+[[ $(run_helper version) == 2.0.3 ]]
 
 printf 'TARGET_USER=%s\nTARGET_UID=+%s\n' "$target_user" "$target_uid" > "$config_dir/config"
 [[ $(run_helper status; true) == inconsistent ]]

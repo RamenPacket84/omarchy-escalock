@@ -23,7 +23,7 @@ Panel {
   readonly property string helper: "/usr/local/libexec/omarchy-escalock-helper"
   readonly property string onboardingLauncher: Quickshell.env("HOME")
     + "/.config/omarchy/plugins/andrewbacon.escalock/bin/omarchy-escalock-onboard"
-  readonly property string expectedSystemVersion: "2.0.2"
+  readonly property string expectedSystemVersion: "2.0.3"
   readonly property string setupState: StateModel.setupState(versionChecked,
     helperPresent, installedSystemVersion, expectedSystemVersion)
   readonly property bool setupMissing: setupState === "missing"
@@ -78,6 +78,15 @@ Panel {
     versionChecked = false
     helperPresent = false
     installedSystemVersion = ""
+    refresh()
+  }
+
+  function poll() {
+    if (transitionProcess.running || onboardingProcess.running) return
+    if (!versionChecked || setupMissing || updateRequired) {
+      recheck()
+      return
+    }
     refresh()
   }
 
@@ -141,7 +150,7 @@ Panel {
     interval: 5000
     repeat: true
     running: true
-    onTriggered: root.recheck()
+    onTriggered: root.poll()
   }
 
   Timer {
@@ -237,7 +246,7 @@ Panel {
         root.statusMessage = detail !== "" ? detail : "Secure Mode transition failed."
         root.statusError = true
       }
-      root.refreshPending = true
+      root.refreshPending = false
       Qt.callLater(root.refresh)
     }
   }

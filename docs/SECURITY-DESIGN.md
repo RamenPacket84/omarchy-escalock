@@ -24,16 +24,19 @@ handling in a retained program remain outside EscaLock's enforcement boundary.
 ## Source and installation trust
 
 The distribution unit is a Git checkout installed by `omarchy plugin add`, not
-an Arch package. Normal setup requires a clean checkout with the canonical
-HTTPS GitHub origin and archives the exact Git `HEAD`. The user is shown the
-origin and commit and must explicitly type `install`.
+an Arch package. Normal setup requires the canonical HTTPS GitHub origin,
+rejects tracked or staged differences, and archives the exact local Git `HEAD`.
+Untracked files are excluded from that archive. The user is shown the origin
+and commit and must explicitly type `install`.
 
 The canonical source repository is
 `https://github.com/RamenPacket84/omarchy-escalock`. The established plugin ID
 `andrewbacon.escalock` and Polkit action namespace
 `com.github.andrewbacon.omarchy-escalock` remain stable application identifiers;
-they are not repository-origin assertions. Setup's exact HTTPS origin policy is
-what binds a published installation to the accepted repository.
+they are not repository-origin assertions. Setup's exact HTTPS origin policy
+identifies the expected upstream repository. The displayed commit and payload
+digest identify exactly what is installed; setup does not independently prove
+that a local `HEAD` is reachable from GitHub.
 
 The standard one-command installation enables the widget. When the system
 helper is absent, the widget invokes the unprivileged onboarding launcher from

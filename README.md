@@ -8,19 +8,21 @@ EscaLock changes sudo and Polkit authorization. Read the [limitations](#what-sec
 and [recovery instructions](#recovery) before enabling Secure Mode for the
 first time.
 
+![EscaLock bar widget showing Secure Mode](preview.png)
+
 ## How it works
 
 EscaLock has two user-facing states:
 
 | Widget state | Administrator Mode | General sudo | Generic `pkexec` | Local shutdown/reboot |
 | --- | --- | --- | --- | --- |
-| Secure Mode **OFF** | ON | Available normally | Handled normally by Omarchy | Handled normally |
+| Secure Mode **OFF** | ON | Available normally | Handled by the normal system policy | Handled normally |
 | Secure Mode **ON** | OFF | Managed general grant removed | Denied for the configured user | Handled normally |
 
 When Secure Mode turns on, EscaLock preserves the managed sudo grant in a
 root-only directory and activates an early Polkit deny rule. The only EscaLock
-recovery action left available asks for the configured user's own password and
-restores Administrator Mode. Explicit systemd-logind shutdown and reboot
+recovery action left available requires authentication as the configured user
+and restores Administrator Mode. Explicit systemd-logind shutdown and reboot
 actions from the active local session continue through the system's normal
 power policy; they do not provide general command execution.
 
@@ -41,9 +43,10 @@ state.
 - A normal local desktop account
 - Either Omarchy's standard `/etc/sudoers.d/00-omarchy-wheel` general grant or
   exactly one Archinstall-style dedicated grant named
-  `/etc/sudoers.d/NN_USER`, where `NN` is a numeric prefix chosen during OS
-  installation
-- The standard build and validation tools checked by `setup.sh`
+  `/etc/sudoers.d/<numeric-prefix>_USER`, where the prefix contains at least two
+  digits and is chosen during OS installation
+- The standard tools included with a fresh Omarchy installation; `setup.sh`
+  checks each required executable before making changes
 
 Setup reports a clear error without installing anything if the system is not
 compatible. EscaLock does not install packages or call a package manager. Run
@@ -137,6 +140,24 @@ omarchy-escalock toggle
 If the bar is unavailable, `omarchy-escalock off` is also the normal recovery
 command.
 
+### Verify the installation
+
+After installation, you can exercise one complete transition from a terminal:
+
+```bash
+omarchy-escalock on
+sudo -k
+sudo -n /usr/bin/true
+pkexec /usr/bin/true
+omarchy-escalock off
+omarchy-escalock status
+```
+
+While Secure Mode is ON, the noninteractive `sudo` command should report that a
+password is required and generic `pkexec` should report that it is not
+authorized. The final status should be `off`. Keep the terminal open until
+Administrator Mode has been restored.
+
 ## What Secure Mode does not do
 
 Secure Mode limits subsequent general-purpose elevation attempts. It does not:
@@ -145,6 +166,7 @@ Secure Mode limits subsequent general-purpose elevation attempts. It does not:
 - revoke open privileged descriptors, cached capabilities, or privileged state
   acquired earlier;
 - remove the user from `wheel`;
+- lock the desktop session, encrypt user files, or prevent offline disk access;
 - protect against compromise of root, the kernel, sudo, Polkit, or EscaLock
   itself; or
 - remove separately delegated sudo commands supplied by Omarchy.
@@ -157,8 +179,8 @@ executables. Other executable-scoped delegations remain privileged
 capabilities. In particular, a sudo argument wildcard can span whitespace and
 may be broader than one apparent argument.
 
-Recovery uses `AUTH_SELF`: anyone who controls the active local session and
-knows the account password can restore Administrator Mode. EscaLock is an
+Recovery uses `AUTH_SELF`: anyone who controls the active local session and can
+authenticate as the account can restore Administrator Mode. EscaLock is an
 intentional privilege gate, not a second authentication factor.
 
 For the full threat model and implementation invariants, see
@@ -171,9 +193,13 @@ checkout and the privileged components:
 
 ```bash
 omarchy-escalock off
-omarchy plugin update andrewbacon.escalock --yes
-~/.config/omarchy/plugins/andrewbacon.escalock/setup.sh --upgrade
+omarchy plugin update andrewbacon.escalock
+~/.config/omarchy/plugins/andrewbacon.escalock/setup.sh
 ```
+
+Review the diff shown by Omarchy before accepting the update. Setup displays
+the new commit and creates another recovery backup before replacing system
+components.
 
 Setup creates a new backup and rolls back to the previous recovery path if the
 upgrade fails. The widget compares its version with the installed helper and
@@ -302,9 +328,13 @@ make clean check
 ./setup.sh --development --enable
 ```
 
-Production setup builds the exact clean Git commit, hands only a fixed
+Production setup builds the exact local Git `HEAD` after rejecting tracked or
+staged differences. Untracked files are not included. It hands only a fixed
 SHA-256-verified payload to root, records its commit and digest, and never lets
 root traverse or modify the plugin checkout in the user's home directory.
+
+Before publishing a release, follow the
+[release checklist](docs/RELEASE-CHECKLIST.md).
 
 ## License
 

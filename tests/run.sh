@@ -10,12 +10,11 @@ bash -n \
   "$project_root/bin/omarchy-escalock-maintain" \
   "$project_root/bin/omarchy-escalock" \
   "$project_root/bin/omarchy-escalock-onboard" \
-  "$project_root/install.sh" \
-  "$project_root/uninstall.sh" \
   "$project_root/tests/test_helper.sh" \
   "$project_root/tests/test_grant_discovery.sh" \
   "$project_root/tests/test_cli.sh" \
   "$project_root/tests/test_onboarding.sh" \
+  "$project_root/tests/test_setup_options.sh" \
   "$project_root/tests/test_source_origin.sh"
 
 /usr/bin/xmllint --noout "$project_root/polkit/com.github.andrewbacon.omarchy-escalock.policy"
@@ -39,6 +38,7 @@ node "$project_root/tests/test_state_model.js"
 "$project_root/tests/test_grant_discovery.sh"
 "$project_root/tests/test_cli.sh"
 "$project_root/tests/test_onboarding.sh"
+"$project_root/tests/test_setup_options.sh"
 "$project_root/tests/test_source_origin.sh"
 
 if rg -n '(/bin/(ba)?sh|eval[[:space:]]*\(|system[[:space:]]*\(|popen[[:space:]]*\()' \
