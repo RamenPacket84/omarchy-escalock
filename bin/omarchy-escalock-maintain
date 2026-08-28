@@ -87,12 +87,14 @@ IFS=: read -r account _ target_uid target_gid _ _ _ <<<"$passwd_entry"
   fail "target account lookup mismatch"
 (( target_uid >= 1000 && target_uid != 65534 )) || fail "target UID must be a normal local user"
 
-grant="$sudoers_dir/00_$target_user"
+legacy_grant_basename="00_$target_user"
+grant_basename=$legacy_grant_basename
+grant="$sudoers_dir/$grant_basename"
 grant_mode=dedicated
 expected_rule="$target_user ALL=(ALL) ALL"
 expected_wheel_rule='%wheel ALL=(ALL:ALL) ALL'
 expected_managed_wheel_rule="%wheel, !$target_user ALL=(ALL:ALL) ALL"
-transaction_paths=("${system_paths[@]}" "$grant" "$wheel_grant")
+transaction_paths=("${system_paths[@]}")
 
 config_grant_mode() {
   local configured_mode
@@ -105,16 +107,47 @@ config_grant_mode() {
   esac
 }
 
+valid_grant_basename() {
+  local mode=$1 basename=$2
+
+  case "$mode" in
+    dedicated) [[ $basename =~ ^[0-9]{2,}_${target_user}$ ]] ;;
+    omarchy-wheel) [[ $basename == "$legacy_grant_basename" ]] ;;
+    *) return 1 ;;
+  esac
+}
+
+config_grant_basename() {
+  local configured_mode=$1 configured_basename
+
+  configured_basename=$(/usr/bin/sed -n 's/^GRANT_BASENAME=//p' "$config_dir/config")
+  [[ -n $configured_basename ]] || configured_basename=$legacy_grant_basename
+  valid_grant_basename "$configured_mode" "$configured_basename" || return 1
+  echo "$configured_basename"
+}
+
 config_belongs_to_target() {
-  local configured_mode expected legacy_expected
+  local configured_mode configured_basename expected current_expected legacy_expected
 
   [[ -f $config_dir/config && ! -L $config_dir/config ]] || return 1
   [[ $(/usr/bin/stat -c '%u:%g:%a' "$config_dir/config") == 0:0:600 ]] || return 1
   configured_mode=$(config_grant_mode) || return 1
-  expected=$'TARGET_USER='"$target_user"$'\nTARGET_UID='"$target_uid"$'\nGRANT_MODE='"$configured_mode"
+  configured_basename=$(config_grant_basename "$configured_mode") || return 1
+  expected=$'TARGET_USER='"$target_user"$'\nTARGET_UID='"$target_uid"$'\nGRANT_MODE='"$configured_mode"$'\nGRANT_BASENAME='"$configured_basename"
   [[ $(<"$config_dir/config") == "$expected" ]] && return 0
+  current_expected=$'TARGET_USER='"$target_user"$'\nTARGET_UID='"$target_uid"$'\nGRANT_MODE='"$configured_mode"
+  [[ $configured_basename == "$legacy_grant_basename" &&
+     $(<"$config_dir/config") == "$current_expected" ]] && return 0
   legacy_expected=$'TARGET_USER='"$target_user"$'\nTARGET_UID='"$target_uid"
-  [[ $configured_mode == dedicated && $(<"$config_dir/config") == "$legacy_expected" ]]
+  [[ $configured_mode == dedicated && $configured_basename == "$legacy_grant_basename" &&
+     $(<"$config_dir/config") == "$legacy_expected" ]]
+}
+
+load_config_grant() {
+  grant_mode=$(config_grant_mode) || fail "existing EscaLock grant mode is invalid"
+  grant_basename=$(config_grant_basename "$grant_mode") ||
+    fail "existing EscaLock grant basename is invalid"
+  grant="$sudoers_dir/$grant_basename"
 }
 
 grant_is_exact() {
@@ -131,24 +164,106 @@ wheel_grant_is_exact() {
   [[ $(/usr/bin/wc -l < "$wheel_grant") == 1 && $(<"$wheel_grant") == "$expected" ]]
 }
 
+sudoers_directory_is_secure() {
+  local metadata mode
+
+  [[ -d $sudoers_dir && ! -L $sudoers_dir ]] || return 1
+  metadata=$(/usr/bin/stat -c '%u:%g:%a' "$sudoers_dir") || return 1
+  [[ $metadata == 0:*:* ]] || return 1
+  mode=${metadata##*:}
+  (( (8#$mode & 0022) == 0 ))
+}
+
+dedicated_grants=()
+
+discover_dedicated_grants() {
+  local path basename
+
+  dedicated_grants=()
+  while IFS= read -r -d '' path; do
+    basename=${path##*/}
+    if valid_grant_basename dedicated "$basename"; then
+      dedicated_grants+=("$basename")
+    fi
+  done < <(/usr/bin/find "$sudoers_dir" -mindepth 1 -maxdepth 1 -print0)
+}
+
+configure_transaction_paths() {
+  transaction_paths=("${system_paths[@]}" "$grant")
+  if [[ $grant_mode == omarchy-wheel ]]; then
+    transaction_paths+=("$wheel_grant")
+  fi
+}
+
+validate_configured_layout() {
+  local basename
+
+  discover_dedicated_grants
+  if [[ $grant_mode == omarchy-wheel ]]; then
+    (( ${#dedicated_grants[@]} == 1 )) ||
+      fail "configured Omarchy wheel layout has an ambiguous managed per-user grant"
+    [[ ${dedicated_grants[0]} == "$grant_basename" ]] ||
+      fail "configured managed per-user grant does not match $grant_basename"
+    [[ -e $wheel_grant && ! -L $wheel_grant ]] ||
+      fail "configured Omarchy wheel grant is missing or unsafe: $wheel_grant"
+  else
+    (( ${#dedicated_grants[@]} == 1 )) ||
+      fail "configured dedicated layout has an ambiguous general sudo grant"
+    basename=${dedicated_grants[0]}
+    [[ $basename == "$grant_basename" ]] ||
+      fail "configured dedicated grant does not match $grant_basename"
+    [[ ! -e $wheel_grant && ! -L $wheel_grant ]] ||
+      fail "an unexpected Omarchy wheel grant conflicts with the configured dedicated grant"
+  fi
+}
+
 fresh_wheel_migration=false
 
 select_grant_mode() {
+  local wheel_present=false candidate_count
+
+  sudoers_directory_is_secure || fail "sudoers include directory is missing or unsafe: $sudoers_dir"
   if [[ -e $config_dir || -L $config_dir ]]; then
     [[ -d $config_dir && ! -L $config_dir ]] || fail "existing configuration path is unsafe"
     [[ $(/usr/bin/stat -c '%u:%g:%a' "$config_dir") == 0:0:700 ]] ||
       fail "existing configuration directory has unsafe ownership or permissions"
     config_belongs_to_target || fail "existing EscaLock configuration belongs to another account or is invalid"
-    grant_mode=$(config_grant_mode) || fail "existing EscaLock grant mode is invalid"
-  elif grant_is_exact; then
-    grant_mode=dedicated
-  elif [[ ! -e $grant && ! -L $grant ]] && wheel_grant_is_exact "$expected_wheel_rule"; then
-    /usr/bin/id -nG "$target_user" | /usr/bin/grep -qw wheel ||
-      fail "target user is not a member of Omarchy's wheel group: $target_user"
-    grant_mode=omarchy-wheel
-    fresh_wheel_migration=true
+    load_config_grant
+    if [[ $grant_mode == omarchy-wheel ]]; then
+      expected_rule="$target_user ALL=(ALL:ALL) ALL"
+    else
+      expected_rule="$target_user ALL=(ALL) ALL"
+    fi
+    validate_configured_layout
   else
-    fail "no supported general sudo grant was found; expected $grant or $wheel_grant"
+    discover_dedicated_grants
+    if [[ -e $wheel_grant || -L $wheel_grant ]]; then
+      wheel_present=true
+    fi
+    candidate_count=${#dedicated_grants[@]}
+    [[ $wheel_present == false ]] || (( candidate_count += 1 ))
+    (( candidate_count == 1 )) ||
+      fail "expected exactly one supported general sudo grant; found $candidate_count"
+
+    if (( ${#dedicated_grants[@]} == 1 )); then
+      grant_mode=dedicated
+      grant_basename=${dedicated_grants[0]}
+      grant="$sudoers_dir/$grant_basename"
+      expected_rule="$target_user ALL=(ALL) ALL"
+      grant_is_exact ||
+        fail "dedicated sudo grant is unsafe or modified: $grant"
+      echo "Detected dedicated Omarchy sudo grant: $grant"
+    else
+      grant_mode=omarchy-wheel
+      grant_basename=$legacy_grant_basename
+      grant="$sudoers_dir/$grant_basename"
+      expected_rule="$target_user ALL=(ALL:ALL) ALL"
+      wheel_grant_is_exact "$expected_wheel_rule" ||
+        fail "Omarchy wheel grant is unsafe or modified: $wheel_grant"
+      /usr/bin/id -nG "$target_user" | /usr/bin/grep -qw wheel ||
+        fail "target user is not a member of Omarchy's wheel group: $target_user"
+      fresh_wheel_migration=true
+    fi
   fi
 
   if [[ $grant_mode == omarchy-wheel ]]; then
@@ -164,6 +279,7 @@ select_grant_mode() {
     expected_rule="$target_user ALL=(ALL) ALL"
     grant_is_exact || fail "expected dedicated sudo grant is missing, unsafe, or modified: $grant"
   fi
+  configure_transaction_paths
 }
 
 check_sudo_policy_backend() {
@@ -529,8 +645,8 @@ if [[ $operation == check || $operation == install ]]; then
   trap rollback_install EXIT
 
   /usr/bin/install -d -o root -g root -m 0700 "$config_dir"
-  /usr/bin/printf 'TARGET_USER=%s\nTARGET_UID=%s\nGRANT_MODE=%s\n' \
-    "$target_user" "$target_uid" "$grant_mode" > "$work/config"
+  /usr/bin/printf 'TARGET_USER=%s\nTARGET_UID=%s\nGRANT_MODE=%s\nGRANT_BASENAME=%s\n' \
+    "$target_user" "$target_uid" "$grant_mode" "$grant_basename" > "$work/config"
   /usr/bin/printf 'VERSION=%s\nSOURCE_COMMIT=%s\nPAYLOAD_SHA256=%s\n' \
     "$(/usr/bin/jq -er '.version' "$stage/manifest.json")" "$source_commit" "$payload_digest" \
     > "$work/install-metadata"
@@ -591,7 +707,7 @@ if [[ $operation == uninstall ]]; then
   [[ -z $stage && -z $source_commit && -z $payload_digest ]] || usage
   [[ -d $config_dir && ! -L $config_dir ]] || fail "trusted EscaLock configuration is missing"
   config_belongs_to_target || fail "EscaLock is configured for another account"
-  grant_mode=$(config_grant_mode) || fail "EscaLock grant mode is invalid"
+  select_grant_mode
   if [[ $grant_mode == omarchy-wheel ]]; then
     expected_rule="$target_user ALL=(ALL:ALL) ALL"
     [[ -f $config_dir/omarchy-wheel.original && ! -L $config_dir/omarchy-wheel.original ]] ||

@@ -16,11 +16,11 @@ equal(context.secureState("enabled"), "off", "administrator enabled means Secure
 equal(context.secureState("disabled"), "on", "administrator disabled means Secure Mode on")
 equal(context.secureState("inconsistent"), "error", "inconsistent state remains visible")
 
-equal(context.setupState(false, false, "", "2.0.1"), "checking", "unchecked setup state")
-equal(context.setupState(true, false, "", "2.0.1"), "missing", "missing helper needs setup")
-equal(context.setupState(true, true, "2.0.0", "2.0.1"), "update", "old helper needs update")
-equal(context.setupState(true, true, "", "2.0.1"), "update", "broken helper needs update")
-equal(context.setupState(true, true, "2.0.1", "2.0.1"), "ready", "matching helper is ready")
+equal(context.setupState(false, false, "", "2.0.2"), "checking", "unchecked setup state")
+equal(context.setupState(true, false, "", "2.0.2"), "missing", "missing helper needs setup")
+equal(context.setupState(true, true, "2.0.1", "2.0.2"), "update", "old helper needs update")
+equal(context.setupState(true, true, "", "2.0.2"), "update", "broken helper needs update")
+equal(context.setupState(true, true, "2.0.2", "2.0.2"), "ready", "matching helper is ready")
 
 equal(context.stateLabel("enabled"), "Secure Mode OFF", "enabled label")
 equal(context.stateLabel("disabled"), "Secure Mode ON", "disabled label")

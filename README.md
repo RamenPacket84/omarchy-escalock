@@ -40,7 +40,9 @@ state.
 - Omarchy 4.x
 - A normal local desktop account
 - Either Omarchy's standard `/etc/sudoers.d/00-omarchy-wheel` general grant or
-  an existing dedicated grant at `/etc/sudoers.d/00_USER`
+  exactly one Archinstall-style dedicated grant named
+  `/etc/sudoers.d/NN_USER`, where `NN` is a numeric prefix chosen during OS
+  installation
 - The standard build and validation tools checked by `setup.sh`
 
 Setup reports a clear error without installing anything if the system is not
@@ -48,11 +50,15 @@ compatible. EscaLock does not install packages or call a package manager. Run
 all commands as the desktop user, not from a root shell and not by prefixing
 the scripts with `sudo`.
 
-On a fresh Omarchy installation, setup preserves the original shared wheel
-grant, changes its live user list to exclude only the configured account, and
-creates a protected per-user grant for EscaLock to toggle. Other wheel users
-remain covered by Omarchy's shared rule. Uninstall restores the original wheel
-grant exactly and removes the EscaLock-created per-user grant.
+Omarchy installations can use either layout. Setup discovers the exact
+dedicated basename without assuming its numeric prefix, validates and records
+it in root-owned configuration, and continues using that same file for every
+transition, upgrade, rollback, and uninstall. If the system uses the shared
+wheel layout, setup preserves the original rule, changes its live user list to
+exclude only the configured account, and creates a protected per-user grant
+for EscaLock to toggle. Other wheel users remain covered by Omarchy's shared
+rule. Uninstall restores the original wheel grant exactly and removes only the
+EscaLock-created per-user grant.
 
 ## Install
 
@@ -217,13 +223,18 @@ Authenticate as the configured user. The expected final EscaLock status is
 
 Use this only if the installed CLI/Polkit recovery path is broken. Boot an
 Arch/Omarchy live environment, mount the system root, and enter it with
-`arch-chroot`. Read `TARGET_USER` from `/etc/omarchy-escalock/config`, then run
-as root:
+`arch-chroot`. Then run as root:
 
 ```bash
+config=/etc/omarchy-escalock/config
+target_user=$(sed -n 's/^TARGET_USER=//p' "$config")
+grant_basename=$(sed -n 's/^GRANT_BASENAME=//p' "$config")
+[[ $target_user =~ ^[a-z_][a-z0-9_-]*$ ]] || exit 1
+[[ -n $grant_basename ]] || grant_basename="00_$target_user"
+[[ $grant_basename =~ ^[0-9]{2,}_${target_user}$ ]] || exit 1
 visudo -cf /etc/omarchy-escalock/sudoers.template
 install -o root -g root -m 0440 \
-  /etc/omarchy-escalock/sudoers.template /etc/sudoers.d/00_USER
+  /etc/omarchy-escalock/sudoers.template "/etc/sudoers.d/$grant_basename"
 if grep -Fxq 'GRANT_MODE=omarchy-wheel' /etc/omarchy-escalock/config; then
   install -o root -g root -m 0440 \
     /etc/omarchy-escalock/omarchy-wheel.managed \
@@ -236,10 +247,10 @@ install -o root -g root -m 0644 \
 rm -f /etc/omarchy-escalock/sudoers.disabled
 ```
 
-Replace `00_USER` with the exact `00_<TARGET_USER>` filename. Reboot, verify
-Administrator Mode is restored, and investigate the failure before using
-Secure Mode again. The latest root-only setup backup is another exact recovery
-source.
+Legacy EscaLock configurations without `GRANT_BASENAME` safely default to
+`00_<TARGET_USER>`. Reboot, verify Administrator Mode is restored, and
+investigate the failure before using Secure Mode again. The latest root-only
+setup backup is another exact recovery source.
 
 ## Troubleshooting
 
@@ -266,6 +277,14 @@ the root-owned installation metadata and backups, then run the setup preflight:
 
 If the normal recovery command no longer works, use the emergency procedure
 above.
+
+### Setup reports an ambiguous sudo grant
+
+EscaLock requires exactly one recognized general grant source. It refuses to
+choose if multiple numeric `<prefix>_<username>` grants exist or if a dedicated
+grant coexists with the shared wheel grant. Do not delete sudoers files just to
+make setup proceed; inspect the complete policy with `sudo visudo -c` and
+determine why the duplicate exists first.
 
 ### `pkexec` says “Not authorized” while Secure Mode is ON
 

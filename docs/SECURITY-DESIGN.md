@@ -6,8 +6,9 @@ EscaLock controls subsequent general-purpose elevation for one configured
 local desktop user without changing supplementary groups or requiring a new
 login. It coordinates:
 
-- a dedicated `/etc/sudoers.d/00_USER` general grant, either pre-existing or
-  safely derived from Omarchy's standard shared wheel grant;
+- a dedicated general grant beneath `/etc/sudoers.d`, either created by
+  Archinstall with a numeric `<prefix>_USER` basename or safely derived from
+  Omarchy's standard shared wheel grant;
 - the complete effective sudo policy matching that user; and
 - Polkit decisions for that user.
 
@@ -94,9 +95,10 @@ production binary is checked for test-only hooks before installation.
 
 `/usr/local/libexec/omarchy-escalock-maintain` is root-owned but not setuid. It
 is reached through sudo only for explicit setup/check/uninstall. It operates on
-fixed system paths and a verified root-owned staging directory. Installation
-and removal create root-only backups and use exit traps to restore the prior
-recovery path after a partial failure.
+fixed system roots, one strictly validated sudoers basename, and a verified
+root-owned staging directory. Installation and removal create root-only
+backups and use exit traps to restore the prior recovery path after a partial
+failure.
 
 ## Polkit policy and precedence
 
@@ -162,6 +164,17 @@ or Omarchy's exact standard shared grant:
 ```text
 %wheel ALL=(ALL:ALL) ALL
 ```
+
+Archinstall chooses a dedicated grant's decimal prefix from the number of
+entries already present in `/etc/sudoers.d`; the value is therefore not fixed
+across installations. EscaLock scans only direct children whose basename has
+at least two decimal digits, one underscore, and the exact configured username.
+It requires exactly one recognized source and rejects unsafe, malformed,
+symlinked, or ambiguous candidates. The validated basename is stored in the
+root-owned mode-0600 configuration. The helper independently validates that
+basename and joins it to the fixed `/etc/sudoers.d` directory; configuration
+can never supply an arbitrary path. Legacy EscaLock configurations without the
+basename field resolve only to `00_USER`.
 
 For the shared layout, setup preserves the original rule and replaces its live
 content with `%wheel, !USER ALL=(ALL:ALL) ALL`. It then creates the exact
@@ -235,6 +248,7 @@ established.
 - The widget refuses transitions when its expected version differs from the
   installed helper version.
 - Uninstall first restores Administrator Mode through the normal authenticated
-  action, verifies the grant/template and complete sudoers policy, restores a
-  migrated shared wheel grant when applicable, then removes fixed system paths
-  transactionally.
+  action, verifies the selected grant/template and complete sudoers policy,
+  restores a migrated shared wheel grant when applicable, then removes managed
+  system paths transactionally. A pre-existing numeric dedicated grant remains
+  at its original basename.

@@ -133,7 +133,7 @@ run_mutation() {
 }
 
 [[ $(run_helper status) == enabled ]]
-[[ $(run_helper version) == 2.0.1 ]]
+[[ $(run_helper version) == 2.0.2 ]]
 
 printf 'TARGET_USER=%s\nTARGET_UID=+%s\n' "$target_user" "$target_uid" > "$config_dir/config"
 [[ $(run_helper status; true) == inconsistent ]]
@@ -147,8 +147,21 @@ printf 'TARGET_USER=%s\nTARGET_UID=%s\nGRANT_MODE=dedicated\n' \
 printf 'TARGET_USER=%s\nTARGET_UID=%s\nGRANT_MODE=unexpected\n' \
   "$target_user" "$target_uid" > "$config_dir/config"
 [[ $(run_helper status; true) == inconsistent ]]
-printf 'TARGET_USER=%s\nTARGET_UID=%s\nGRANT_MODE=dedicated\n' \
-  "$target_user" "$target_uid" > "$config_dir/config"
+
+legacy_grant=$grant
+grant="$test_root/etc/sudoers.d/04_$target_user"
+mv "$legacy_grant" "$grant"
+printf 'TARGET_USER=%s\nTARGET_UID=%s\nGRANT_MODE=dedicated\nGRANT_BASENAME=04_%s\n' \
+  "$target_user" "$target_uid" "$target_user" > "$config_dir/config"
+[[ $(run_helper status) == enabled ]]
+printf 'TARGET_USER=%s\nTARGET_UID=%s\nGRANT_MODE=dedicated\nGRANT_BASENAME=4_%s\n' \
+  "$target_user" "$target_uid" "$target_user" > "$config_dir/config"
+[[ $(run_helper status; true) == inconsistent ]]
+printf 'TARGET_USER=%s\nTARGET_UID=%s\nGRANT_MODE=dedicated\nGRANT_BASENAME=../04_%s\n' \
+  "$target_user" "$target_uid" "$target_user" > "$config_dir/config"
+[[ $(run_helper status; true) == inconsistent ]]
+printf 'TARGET_USER=%s\nTARGET_UID=%s\nGRANT_MODE=dedicated\nGRANT_BASENAME=04_%s\n' \
+  "$target_user" "$target_uid" "$target_user" > "$config_dir/config"
 
 if run_helper unexpected >/dev/null 2>&1; then
   echo "helper accepted an unexpected operation" >&2
@@ -212,6 +225,8 @@ chmod 0644 "$rule_file"
 [[ $(run_helper status) == disabled ]]
 run_mutation enable >/dev/null
 
+mv "$grant" "$legacy_grant"
+grant=$legacy_grant
 printf 'TARGET_USER=%s\nTARGET_UID=%s\nGRANT_MODE=omarchy-wheel\n' \
   "$target_user" "$target_uid" > "$config_dir/config"
 chmod 0640 "$config_dir/sudoers.template" "$grant"
@@ -233,6 +248,11 @@ mv "$disabled" "$grant"
 chmod 0600 "$config_dir"/sudo-policy.*.json
 
 [[ $(run_helper status) == enabled ]]
+printf 'TARGET_USER=%s\nTARGET_UID=%s\nGRANT_MODE=omarchy-wheel\nGRANT_BASENAME=04_%s\n' \
+  "$target_user" "$target_uid" "$target_user" > "$config_dir/config"
+[[ $(run_helper status; true) == inconsistent ]]
+printf 'TARGET_USER=%s\nTARGET_UID=%s\nGRANT_MODE=omarchy-wheel\n' \
+  "$target_user" "$target_uid" > "$config_dir/config"
 [[ $(run_mutation disable) == disabled ]]
 [[ ! -e $grant && -f $disabled ]]
 cmp -s "$wheel_grant" "$config_dir/omarchy-wheel.managed"

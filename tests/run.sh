@@ -13,6 +13,7 @@ bash -n \
   "$project_root/install.sh" \
   "$project_root/uninstall.sh" \
   "$project_root/tests/test_helper.sh" \
+  "$project_root/tests/test_grant_discovery.sh" \
   "$project_root/tests/test_cli.sh" \
   "$project_root/tests/test_onboarding.sh" \
   "$project_root/tests/test_source_origin.sh"
@@ -35,6 +36,7 @@ qml_version=$(/usr/bin/sed -n \
 node "$project_root/tests/test_rules.js"
 node "$project_root/tests/test_state_model.js"
 "$project_root/tests/test_helper.sh"
+"$project_root/tests/test_grant_discovery.sh"
 "$project_root/tests/test_cli.sh"
 "$project_root/tests/test_onboarding.sh"
 "$project_root/tests/test_source_origin.sh"

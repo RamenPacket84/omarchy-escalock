@@ -60,7 +60,7 @@
 #define JQ "/usr/bin/jq"
 #define RULE_BASENAME "00-00-omarchy-escalock.rules"
 #define MAX_FILE_SIZE (1024U * 1024U)
-#define ESCALOCK_VERSION "2.0.1"
+#define ESCALOCK_VERSION "2.0.2"
 
 enum grant_mode {
     GRANT_DEDICATED,
@@ -70,6 +70,7 @@ enum grant_mode {
 struct config {
     char user[128];
     uid_t uid;
+    char grant_basename[256];
     char grant_path[PATH_MAX];
     enum grant_mode grant_mode;
 };
@@ -210,6 +211,27 @@ static bool valid_username(const char *name)
     return true;
 }
 
+static bool valid_grant_basename(const char *basename, const char *user,
+                                 enum grant_mode mode)
+{
+    const char *cursor = basename;
+    size_t digit_count = 0U;
+    char expected[256];
+    int written;
+
+    if (mode == GRANT_OMARCHY_WHEEL) {
+        written = snprintf(expected, sizeof(expected), "00_%s", user);
+        return written > 0 && (size_t)written < sizeof(expected) &&
+               strcmp(basename, expected) == 0;
+    }
+    while (*cursor >= '0' && *cursor <= '9') {
+        ++cursor;
+        ++digit_count;
+    }
+    return digit_count >= 2U && *cursor == '_' &&
+           strcmp(cursor + 1, user) == 0;
+}
+
 static bool parse_uid(const char *text, uid_t *result)
 {
     char *end = NULL;
@@ -321,65 +343,84 @@ static bool file_equals_blob(const char *path, mode_t mode, const struct blob *e
 static bool load_config(struct config *cfg)
 {
     struct blob content;
-    char *first_end;
-    char *second_end;
-    char *third_end;
+    char *cursor;
+    char *end;
+    char *lines[4];
+    size_t line_count = 0U;
+    const char *value;
+    int written;
     const char user_prefix[] = "TARGET_USER=";
     const char uid_prefix[] = "TARGET_UID=";
     const char mode_prefix[] = "GRANT_MODE=";
+    const char basename_prefix[] = "GRANT_BASENAME=";
     struct passwd *pw;
 
     memset(cfg, 0, sizeof(*cfg));
     if (!load_file(path_config, 0600, &content))
         return false;
+    if (strlen(content.data) != content.len)
+        goto invalid;
+    cursor = content.data;
+    while (*cursor != '\0') {
+        if (line_count == sizeof(lines) / sizeof(lines[0]))
+            goto invalid;
+        end = strchr(cursor, '\n');
+        if (end == NULL)
+            goto invalid;
+        *end = '\0';
+        lines[line_count++] = cursor;
+        cursor = end + 1;
+    }
+    if (line_count < 2U ||
+        strncmp(lines[0], user_prefix, sizeof(user_prefix) - 1U) != 0 ||
+        strncmp(lines[1], uid_prefix, sizeof(uid_prefix) - 1U) != 0)
+        goto invalid;
 
-    first_end = strchr(content.data, '\n');
-    if (first_end == NULL) {
-        free_blob(&content);
-        return false;
-    }
-    *first_end = '\0';
-    second_end = strchr(first_end + 1, '\n');
-    if (second_end == NULL ||
-        strncmp(content.data, user_prefix, sizeof(user_prefix) - 1U) != 0 ||
-        strncmp(first_end + 1, uid_prefix, sizeof(uid_prefix) - 1U) != 0) {
-        free_blob(&content);
-        return false;
-    }
-    *second_end = '\0';
-    checked_snprintf(cfg->user, sizeof(cfg->user), "%s",
-                     content.data + sizeof(user_prefix) - 1U);
+    value = lines[0] + sizeof(user_prefix) - 1U;
+    if (strlen(value) >= sizeof(cfg->user))
+        goto invalid;
+    memcpy(cfg->user, value, strlen(value) + 1U);
     if (!valid_username(cfg->user) ||
-        !parse_uid(first_end + 1 + sizeof(uid_prefix) - 1U, &cfg->uid)) {
-        free_blob(&content);
-        return false;
-    }
+        !parse_uid(lines[1] + sizeof(uid_prefix) - 1U, &cfg->uid))
+        goto invalid;
+
     cfg->grant_mode = GRANT_DEDICATED;
-    if (second_end[1] != '\0') {
-        third_end = strchr(second_end + 1, '\n');
-        if (third_end == NULL || third_end[1] != '\0' ||
-            strncmp(second_end + 1, mode_prefix, sizeof(mode_prefix) - 1U) != 0) {
-            free_blob(&content);
-            return false;
-        }
-        *third_end = '\0';
-        if (strcmp(second_end + 1 + sizeof(mode_prefix) - 1U,
-                   "omarchy-wheel") == 0) {
+    if (line_count >= 3U) {
+        if (strncmp(lines[2], mode_prefix, sizeof(mode_prefix) - 1U) != 0)
+            goto invalid;
+        value = lines[2] + sizeof(mode_prefix) - 1U;
+        if (strcmp(value, "omarchy-wheel") == 0)
             cfg->grant_mode = GRANT_OMARCHY_WHEEL;
-        } else if (strcmp(second_end + 1 + sizeof(mode_prefix) - 1U,
-                          "dedicated") != 0) {
-            free_blob(&content);
-            return false;
-        }
+        else if (strcmp(value, "dedicated") != 0)
+            goto invalid;
     }
+
+    written = snprintf(cfg->grant_basename, sizeof(cfg->grant_basename),
+                       "00_%s", cfg->user);
+    if (written < 0 || (size_t)written >= sizeof(cfg->grant_basename))
+        goto invalid;
+    if (line_count == 4U) {
+        if (strncmp(lines[3], basename_prefix, sizeof(basename_prefix) - 1U) != 0)
+            goto invalid;
+        value = lines[3] + sizeof(basename_prefix) - 1U;
+        if (strlen(value) >= sizeof(cfg->grant_basename))
+            goto invalid;
+        memcpy(cfg->grant_basename, value, strlen(value) + 1U);
+    }
+    if (!valid_grant_basename(cfg->grant_basename, cfg->user, cfg->grant_mode))
+        goto invalid;
     free_blob(&content);
 
     pw = getpwnam(cfg->user);
     if (pw == NULL || pw->pw_uid != cfg->uid)
         return false;
-    checked_snprintf(cfg->grant_path, sizeof(cfg->grant_path), "%s/00_%s",
-                     path_sudoers_dir, cfg->user);
+    checked_snprintf(cfg->grant_path, sizeof(cfg->grant_path), "%s/%s",
+                     path_sudoers_dir, cfg->grant_basename);
     return true;
+
+invalid:
+    free_blob(&content);
+    return false;
 }
 
 static bool expected_sudo_template(const struct config *cfg, const struct blob *blob)
