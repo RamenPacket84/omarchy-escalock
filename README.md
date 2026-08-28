@@ -4,9 +4,13 @@ EscaLock is a Secure Mode bar widget for Omarchy 4. It lets one local desktop
 user temporarily give up general administrator elevation, clearly displays the
 real system state, and provides an authenticated way to restore access.
 
-EscaLock changes sudo and Polkit authorization. Read the [limitations](#what-secure-mode-does-not-do)
-and [recovery instructions](#recovery) before enabling Secure Mode for the
-first time.
+> **Security notice:** EscaLock is an independent project and has not undergone
+> a professional security audit. I use it on my own systems, but it modifies
+> sudo and Polkit authorization and could leave you without normal administrator
+> access if something goes wrong. Read the
+> [limitations](#what-secure-mode-does-not-do) and
+> [recovery instructions](#recovery), keep appropriate backups, and use it at
+> your own risk.
 
 ![EscaLock bar widget showing Secure Mode](preview.png)
 
