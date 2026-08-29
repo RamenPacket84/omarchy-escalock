@@ -1,0 +1,181 @@
+# shellcheck shell=bash
+
+sudoers_directory_is_secure() {
+  local metadata mode
+
+  [[ -d $sudoers_dir && ! -L $sudoers_dir ]] || return 1
+  metadata=$(/usr/bin/stat -c '%u:%g:%a' "$sudoers_dir") || return 1
+  [[ $metadata == 0:*:* ]] || return 1
+  mode=${metadata##*:}
+  (( (8#$mode & 0022) == 0 ))
+}
+
+dedicated_grants=()
+
+discover_dedicated_grants() {
+  local path basename
+
+  dedicated_grants=()
+  while IFS= read -r -d '' path; do
+    basename=${path##*/}
+    if valid_grant_basename dedicated "$basename"; then
+      dedicated_grants+=("$basename")
+    fi
+  done < <(/usr/bin/find "$sudoers_dir" -mindepth 1 -maxdepth 1 -print0)
+}
+
+configure_transaction_paths() {
+  transaction_paths=("${system_paths[@]}" "$grant")
+  if [[ $grant_mode == omarchy-wheel ]]; then
+    transaction_paths+=("$wheel_grant")
+  fi
+}
+
+validate_configured_layout() {
+  local basename
+
+  discover_dedicated_grants
+  if [[ $grant_mode == omarchy-wheel ]]; then
+    (( ${#dedicated_grants[@]} == 1 )) ||
+      fail "configured Omarchy wheel layout has an ambiguous managed per-user grant"
+    [[ ${dedicated_grants[0]} == "$grant_basename" ]] ||
+      fail "configured managed per-user grant does not match $grant_basename"
+    [[ -e $wheel_grant && ! -L $wheel_grant ]] ||
+      fail "configured Omarchy wheel grant is missing or unsafe: $wheel_grant"
+  else
+    (( ${#dedicated_grants[@]} == 1 )) ||
+      fail "configured dedicated layout has an ambiguous general sudo grant"
+    basename=${dedicated_grants[0]}
+    [[ $basename == "$grant_basename" ]] ||
+      fail "configured dedicated grant does not match $grant_basename"
+    [[ ! -e $wheel_grant && ! -L $wheel_grant ]] ||
+      fail "an unexpected Omarchy wheel grant conflicts with the configured dedicated grant"
+  fi
+}
+
+select_existing_grant() {
+  [[ -d $config_dir && ! -L $config_dir ]] || fail "existing configuration path is unsafe"
+  [[ $(/usr/bin/stat -c '%u:%g:%a' "$config_dir") == 0:0:700 ]] ||
+    fail "existing configuration directory has unsafe ownership or permissions"
+  config_belongs_to_target ||
+    fail "existing EscaLock configuration belongs to another account or is invalid"
+  load_config_grant
+  if [[ $grant_mode == omarchy-wheel ]]; then
+    expected_rule="$target_user ALL=(ALL:ALL) ALL"
+  else
+    expected_rule="$target_user ALL=(ALL) ALL"
+  fi
+  validate_configured_layout
+}
+
+select_new_grant() {
+  local wheel_present=false candidate_count
+
+  discover_dedicated_grants
+  if [[ -e $wheel_grant || -L $wheel_grant ]]; then
+    wheel_present=true
+  fi
+  candidate_count=${#dedicated_grants[@]}
+  [[ $wheel_present == false ]] || (( candidate_count += 1 ))
+  (( candidate_count == 1 )) ||
+    fail "expected exactly one supported general sudo grant; found $candidate_count"
+
+  if (( ${#dedicated_grants[@]} == 1 )); then
+    grant_mode=dedicated
+    grant_basename=${dedicated_grants[0]}
+    grant="$sudoers_dir/$grant_basename"
+    expected_rule="$target_user ALL=(ALL) ALL"
+    grant_is_exact || fail "dedicated sudo grant is unsafe or modified: $grant"
+    [[ $grant_messages == false ]] || echo "Detected dedicated Omarchy sudo grant: $grant"
+    return
+  fi
+
+  grant_mode=omarchy-wheel
+  grant_basename=$legacy_grant_basename
+  grant="$sudoers_dir/$grant_basename"
+  expected_rule="$target_user ALL=(ALL:ALL) ALL"
+  wheel_grant_is_exact "$expected_wheel_rule" ||
+    fail "Omarchy wheel grant is unsafe or modified: $wheel_grant"
+  /usr/bin/id -nG "$target_user" | /usr/bin/grep -qw wheel ||
+    fail "target user is not a member of Omarchy's wheel group: $target_user"
+  fresh_wheel_migration=true
+}
+
+validate_selected_grant() {
+  if [[ $grant_mode == omarchy-wheel ]]; then
+    expected_rule="$target_user ALL=(ALL:ALL) ALL"
+    if [[ $fresh_wheel_migration == false ]]; then
+      grant_is_exact || fail "managed per-user sudo grant is missing, unsafe, or modified: $grant"
+      wheel_grant_is_exact "$expected_managed_wheel_rule" ||
+        fail "managed Omarchy wheel grant is missing, unsafe, or modified: $wheel_grant"
+    else
+      [[ $grant_messages == false ]] ||
+        echo "Detected Omarchy shared wheel grant; only $target_user will be isolated for Secure Mode."
+    fi
+  else
+    expected_rule="$target_user ALL=(ALL) ALL"
+    grant_is_exact || fail "expected dedicated sudo grant is missing, unsafe, or modified: $grant"
+  fi
+  configure_transaction_paths
+}
+
+select_grant_mode() {
+  sudoers_directory_is_secure || fail "sudoers include directory is missing or unsafe: $sudoers_dir"
+  if [[ -e $config_dir || -L $config_dir ]]; then
+    select_existing_grant
+  else
+    select_new_grant
+  fi
+  validate_selected_grant
+}
+
+check_sudo_policy_backend() {
+  local metadata mode entry symbol module
+  local configured_plugins=()
+  local policy_count=0
+
+  [[ -e $sudo_conf ]] || return 0
+  [[ -f $sudo_conf && ! -L $sudo_conf ]] || fail "unsafe sudo configuration path: $sudo_conf"
+  metadata=$(/usr/bin/stat -c '%u:%g:%a' "$sudo_conf")
+  [[ $metadata == 0:*:* ]] || fail "$sudo_conf must be root-owned"
+  mode=${metadata##*:}
+  (( (8#$mode & 0022) == 0 )) || fail "$sudo_conf must not be group- or world-writable"
+  mapfile -t configured_plugins < <(
+    /usr/bin/awk '
+      /^[[:space:]]*#/ { next }
+      /^[[:space:]]*Plugin[[:space:]]+/ { print $2 "|" $3 }
+    ' "$sudo_conf"
+  )
+  for entry in "${configured_plugins[@]}"; do
+    symbol=${entry%%|*}
+    module=${entry#*|}
+    [[ ${module##*/} == sudoers.so ]] || fail "unsupported sudo plugin configuration: $symbol $module"
+    case "$symbol" in
+      sudoers_policy) (( policy_count += 1 )) ;;
+      sudoers_io | sudoers_audit) ;;
+      *) fail "unsupported sudo plugin symbol: $symbol" ;;
+    esac
+  done
+  if (( ${#configured_plugins[@]} > 0 )); then
+    (( policy_count == 1 )) || fail "$sudo_conf does not select exactly one sudoers policy plugin"
+  fi
+}
+
+check_rule_precedence() {
+  local directory path basename metadata mode
+
+  for directory in /etc/polkit-1/rules.d /usr/share/polkit-1/rules.d; do
+    [[ -d $directory && ! -L $directory ]] || fail "unsafe or missing Polkit rule directory: $directory"
+    metadata=$(/usr/bin/stat -c '%u:%g:%a' "$directory")
+    [[ $metadata == 0:*:* ]] || fail "Polkit rule directory must be root-owned: $directory"
+    mode=${metadata##*:}
+    (( (8#$mode & 0022) == 0 )) || fail "Polkit rule directory is group- or world-writable: $directory"
+    while IFS= read -r -d '' path; do
+      basename=${path##*/}
+      if [[ $basename < $rule_basename ]] ||
+         [[ $directory == /usr/share/polkit-1/rules.d && $basename == "$rule_basename" ]]; then
+        fail "Polkit rule $path sorts before EscaLock and can preempt its security decisions"
+      fi
+    done < <(/usr/bin/find "$directory" -mindepth 1 -maxdepth 1 -name '*.rules' -print0)
+  done
+}

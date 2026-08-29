@@ -1,0 +1,127 @@
+#!/bin/bash
+
+set -euo pipefail
+umask 077
+export LC_ALL=C
+
+readonly escalock_program=omarchy-escalock-maint-uninstall
+readonly script_path=${BASH_SOURCE[0]}
+readonly script_dir=$(cd -- "$(/usr/bin/dirname -- "$script_path")" && pwd -P)
+
+bootstrap_fail() {
+  echo "$escalock_program: $*" >&2
+  exit 1
+}
+
+module_is_safe() {
+  local module=$1 metadata
+
+  [[ -f $module && ! -L $module ]] || return 1
+  metadata=$(/usr/bin/stat -c '%u:%g:%a' "$module") || return 1
+  [[ $metadata == 0:0:644 ]]
+}
+
+directory_is_safe() {
+  local directory=$1 metadata mode
+
+  [[ -d $directory && ! -L $directory ]] || return 1
+  metadata=$(/usr/bin/stat -c '%u:%g:%a' "$directory") || return 1
+  [[ $metadata == 0:0:* ]] || return 1
+  mode=${metadata##*:}
+  (( (8#$mode & 0022) == 0 ))
+}
+
+readonly common_module="$script_dir/omarchy-escalock-maint-common"
+readonly grant_module="$script_dir/omarchy-escalock-maint-grant"
+readonly transaction_module="$script_dir/omarchy-escalock-maint-transaction"
+directory_is_safe "$script_dir" || bootstrap_fail "installed component directory is unsafe"
+for module in "$common_module" "$grant_module" "$transaction_module"; do
+  module_is_safe "$module" || bootstrap_fail "installed privileged module is unsafe: $module"
+done
+# shellcheck source=bin/omarchy-escalock-maint-common
+source "$common_module"
+# shellcheck source=bin/omarchy-escalock-maint-grant
+source "$grant_module"
+# shellcheck source=bin/omarchy-escalock-maint-transaction
+source "$transaction_module"
+
+usage() {
+  echo "Usage: $escalock_program --user USER" >&2
+  exit 2
+}
+
+rollback_uninstall() {
+  local rc=$?
+
+  trap - EXIT
+  if (( rc != 0 )) && [[ $uninstall_committed == false ]]; then
+    restore_removed_install "$backup_dir"
+  fi
+  exit "$rc"
+}
+
+validate_uninstall_state() {
+  [[ -d $config_dir && ! -L $config_dir ]] || fail "trusted EscaLock configuration is missing"
+  config_belongs_to_target || fail "EscaLock is configured for another account"
+  select_grant_mode
+  if [[ $grant_mode == omarchy-wheel ]]; then
+    expected_rule="$target_user ALL=(ALL:ALL) ALL"
+    [[ -f $config_dir/omarchy-wheel.original && ! -L $config_dir/omarchy-wheel.original ]] ||
+      fail "protected original Omarchy wheel grant is missing"
+    [[ -f $config_dir/omarchy-wheel.managed && ! -L $config_dir/omarchy-wheel.managed ]] ||
+      fail "protected managed Omarchy wheel grant is missing"
+    /usr/bin/cmp -s -- "$wheel_grant" "$config_dir/omarchy-wheel.managed" ||
+      fail "live Omarchy wheel grant differs from the protected template"
+  else
+    expected_rule="$target_user ALL=(ALL) ALL"
+  fi
+  [[ -x $helper ]] || fail "installed helper is missing"
+  current_state=$(PKEXEC_UID="$target_uid" "$helper" status) || fail "helper could not verify state"
+  [[ $current_state == enabled ]] || fail "Administrator Mode must be ON before uninstall"
+  grant_is_exact || fail "the restored sudo grant is missing or modified"
+  /usr/bin/cmp -s -- "$grant" "$config_dir/sudoers.template" ||
+    fail "live grant differs from the protected template"
+  /usr/bin/visudo -c >/dev/null || fail "sudoers is invalid before uninstall"
+}
+
+remove_system_components() {
+  if [[ $grant_mode == omarchy-wheel ]]; then
+    /usr/bin/install -o root -g root -m 0440 "$config_dir/omarchy-wheel.original" "$wheel_grant"
+    /usr/bin/visudo -c >/dev/null || fail "sudoers became invalid while restoring Omarchy's wheel grant"
+    /usr/bin/rm -f -- "$grant"
+    /usr/bin/visudo -c >/dev/null || fail "sudoers became invalid while removing the managed per-user grant"
+  fi
+
+  /usr/bin/rm -f -- "$rule_file" "$legacy_recovery_rule" "$legacy_off_rule" \
+    "$legacy_manage_rule" "$policy_file" "$helper" "$cli" "$legacy_maintainer"
+  /usr/bin/rm -rf -- "$config_dir"
+  /usr/bin/visudo -c >/dev/null || fail "sudoers became invalid after uninstall"
+  if [[ $grant_mode == omarchy-wheel ]]; then
+    wheel_grant_is_exact "$expected_wheel_rule" || fail "restored Omarchy wheel grant is invalid"
+    [[ ! -e $grant && ! -L $grant ]] || fail "managed per-user grant remains after uninstall"
+  else
+    [[ -f $grant ]] || fail "restored sudo grant disappeared"
+  fi
+  /usr/bin/rm -f -- "$uninstaller" "$installed_common" "$installed_grant" "$installed_transaction"
+}
+
+[[ $EUID == 0 ]] || bootstrap_fail "this maintenance command must run as root"
+(( $# == 2 )) || usage
+[[ $1 == --user ]] || usage
+initialize_target_account "$2"
+validate_uninstall_state
+
+timestamp=$(/usr/bin/date -u +%Y%m%dT%H%M%SZ)
+backup_dir="$backup_root/$timestamp-uninstall-$$"
+/usr/bin/install -d -o root -g root -m 0700 "$backup_dir"
+/usr/bin/cp -a -- "$config_dir" "$backup_dir/config"
+backup_system_files "$backup_dir/system"
+
+uninstall_committed=false
+trap rollback_uninstall EXIT
+remove_system_components
+uninstall_committed=true
+trap - EXIT
+
+echo "Uninstalled EscaLock system components. Administrator access remains ON."
+echo "Recovery backup: $backup_dir"

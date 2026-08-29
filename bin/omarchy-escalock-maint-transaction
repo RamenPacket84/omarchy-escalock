@@ -1,0 +1,63 @@
+# shellcheck shell=bash
+
+backup_system_files() {
+  local destination=$1 path
+
+  /usr/bin/install -d -o root -g root -m 0700 "$destination"
+  for path in "${transaction_paths[@]}"; do
+    if [[ -f $path && ! -L $path ]]; then
+      /usr/bin/cp -a --parents -- "$path" "$destination"
+    elif [[ -e $path || -L $path ]]; then
+      fail "refusing unsafe existing system path: $path"
+    fi
+  done
+}
+
+restore_system_files() {
+  local source=$1 path saved
+
+  for path in "${transaction_paths[@]}"; do
+    /usr/bin/rm -f -- "$path"
+    saved="$source$path"
+    if [[ -f $saved && ! -L $saved ]]; then
+      /usr/bin/cp -a -- "$saved" "$path"
+    fi
+  done
+}
+
+restore_config_directory() {
+  local saved_config=$1
+
+  if [[ -e $config_dir || -L $config_dir ]]; then
+    if [[ -d $config_dir && ! -L $config_dir ]]; then
+      /usr/bin/rm -rf -- "$config_dir"
+    else
+      echo "Could not remove unsafe partial configuration path: $config_dir" >&2
+    fi
+  fi
+  if [[ ! -e $config_dir && ! -L $config_dir && -d $saved_config && ! -L $saved_config ]]; then
+    /usr/bin/cp -a -- "$saved_config" "$config_dir"
+  fi
+}
+
+restore_previous_install() {
+  local backup_dir=$1
+
+  set +e
+  echo "Installation failed; restoring the previous EscaLock recovery path." >&2
+  restore_system_files "$backup_dir/system"
+  restore_config_directory "$backup_dir/config.before"
+  /usr/bin/visudo -c >/dev/null ||
+    echo "WARNING: sudoers validation failed after rollback; use backup $backup_dir" >&2
+}
+
+restore_removed_install() {
+  local backup_dir=$1
+
+  set +e
+  echo "Uninstall failed; restoring the EscaLock recovery path." >&2
+  restore_system_files "$backup_dir/system"
+  restore_config_directory "$backup_dir/config"
+  /usr/bin/visudo -c >/dev/null ||
+    echo "WARNING: sudoers validation failed after rollback; use backup $backup_dir" >&2
+}

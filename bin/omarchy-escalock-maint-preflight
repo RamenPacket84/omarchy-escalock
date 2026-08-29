@@ -1,0 +1,288 @@
+#!/bin/bash
+
+set -euo pipefail
+umask 077
+export LC_ALL=C
+
+readonly escalock_program=omarchy-escalock-maint-preflight
+readonly script_path=${BASH_SOURCE[0]}
+readonly script_dir=$(cd -- "$(/usr/bin/dirname -- "$script_path")" && pwd -P)
+
+bootstrap_fail() {
+  echo "$escalock_program: $*" >&2
+  exit 1
+}
+
+module_is_safe() {
+  local module=$1 metadata mode
+
+  [[ -f $module && ! -L $module ]] || return 1
+  metadata=$(/usr/bin/stat -c '%u:%g:%a' "$module") || return 1
+  [[ $metadata == 0:0:* ]] || return 1
+  mode=${metadata##*:}
+  (( (8#$mode & 0022) == 0 ))
+}
+
+directory_is_safe() {
+  local directory=$1 metadata mode
+
+  [[ -d $directory && ! -L $directory ]] || return 1
+  metadata=$(/usr/bin/stat -c '%u:%g:%a' "$directory") || return 1
+  [[ $metadata == 0:0:* ]] || return 1
+  mode=${metadata##*:}
+  (( (8#$mode & 0022) == 0 ))
+}
+
+readonly common_module="$script_dir/omarchy-escalock-maint-common"
+readonly grant_module="$script_dir/omarchy-escalock-maint-grant"
+directory_is_safe "$script_dir" || bootstrap_fail "privileged component directory is unsafe"
+module_is_safe "$common_module" || bootstrap_fail "privileged common module is unsafe"
+module_is_safe "$grant_module" || bootstrap_fail "privileged grant module is unsafe"
+# shellcheck source=bin/omarchy-escalock-maint-common
+source "$common_module"
+# shellcheck source=bin/omarchy-escalock-maint-grant
+source "$grant_module"
+
+usage() {
+  echo "Usage: $escalock_program {check|prepare} --stage DIR --user USER --commit SHA --digest SHA256" >&2
+  exit 2
+}
+
+check_stage() {
+  local relative metadata_version helper_version
+  local required=(
+    build/omarchy-escalock-helper
+    bin/omarchy-escalock
+    bin/omarchy-escalock-maint-common
+    bin/omarchy-escalock-maint-grant
+    bin/omarchy-escalock-maint-transaction
+    bin/omarchy-escalock-maint-preflight
+    bin/omarchy-escalock-maint-install
+    bin/omarchy-escalock-maint-uninstall
+    manifest.json
+    polkit/00-00-omarchy-escalock-on.rules.in
+    polkit/00-00-omarchy-escalock-off.rules.in
+    polkit/com.github.andrewbacon.omarchy-escalock.policy
+  )
+
+  [[ $stage == /* && -d $stage && ! -L $stage ]] || fail "the verified staging directory is unsafe"
+  [[ $(/usr/bin/stat -c '%u:%g:%a' "$stage") == 0:0:700 ]] ||
+    fail "the verified staging directory must be root:root mode 0700"
+  for relative in "${required[@]}"; do
+    [[ -f $stage/$relative && ! -L $stage/$relative ]] || fail "staged payload is missing $relative"
+    [[ $(/usr/bin/stat -c '%u:%g' "$stage/$relative") == 0:0 ]] ||
+      fail "staged payload member is not root-owned: $relative"
+  done
+  [[ $source_commit =~ ^[0-9a-f]{40,64}$ ]] || fail "invalid source commit"
+  [[ $payload_digest =~ ^[0-9a-f]{64}$ ]] || fail "invalid payload digest"
+  metadata_version=$(/usr/bin/jq -er '.version' "$stage/manifest.json") || fail "invalid staged manifest"
+  helper_version=$("$stage/build/omarchy-escalock-helper" version) || fail "staged helper cannot report its version"
+  [[ $metadata_version == "$helper_version" ]] || fail "manifest/helper version mismatch"
+  if /usr/bin/strings "$stage/build/omarchy-escalock-helper" |
+      /usr/bin/grep 'OMARCHY_ESCALOCK_TEST_' >/dev/null; then
+    fail "refusing to install a helper containing test-only hooks"
+  fi
+  /usr/bin/xmllint --noout "$stage/polkit/com.github.andrewbacon.omarchy-escalock.policy"
+}
+
+render_templates() {
+  /usr/bin/sed "s/@@TARGET_USER@@/$target_user/g" \
+    "$stage/polkit/00-00-omarchy-escalock-on.rules.in" > "$work/rule.on"
+  /usr/bin/sed "s/@@TARGET_USER@@/$target_user/g" \
+    "$stage/polkit/00-00-omarchy-escalock-off.rules.in" > "$work/rule.off"
+  /usr/bin/chown root:root "$work/rule.on" "$work/rule.off"
+  /usr/bin/chmod 0644 "$work/rule.on" "$work/rule.off"
+
+  /usr/bin/printf '%s\n' "$expected_rule" > "$work/sudoers.template"
+  /usr/bin/chown root:root "$work/sudoers.template"
+  /usr/bin/chmod 0440 "$work/sudoers.template"
+  if [[ $grant_mode == omarchy-wheel ]]; then
+    /usr/bin/printf '%s\n' "$expected_wheel_rule" > "$work/omarchy-wheel.original"
+    /usr/bin/printf '%s\n' "$expected_managed_wheel_rule" > "$work/omarchy-wheel.managed"
+    /usr/bin/chown root:root "$work/omarchy-wheel.original" "$work/omarchy-wheel.managed"
+    /usr/bin/chmod 0440 "$work/omarchy-wheel.original" "$work/omarchy-wheel.managed"
+  fi
+}
+
+capture_current_policy() {
+  local filter="user=$target_user"
+
+  /usr/bin/cvtsudoers -f JSON -e -M -m "$filter" "$sudoers_main" |
+    /usr/bin/jq -S . > "$work/sudo-policy.current.json"
+}
+
+derive_migrated_wheel_policy() {
+  local wheel_count
+
+  wheel_count=$(/usr/bin/jq '
+    [
+      .User_Specs[]?
+      | select(.User_List == [{"usergroup": "wheel"}])
+      | select(.Host_List == [{"hostname": "ALL"}])
+      | .Cmnd_Specs[]?
+      | select((.runasusers // []) == [{"username": "ALL"}])
+      | select((.runasgroups // []) == [{"usergroup": "ALL"}])
+      | select(.Commands == [{"command": "ALL"}])
+    ] | length
+  ' "$work/sudo-policy.current.json")
+  [[ $wheel_count == 1 ]] ||
+    fail "the effective sudo policy does not contain exactly one Omarchy wheel grant"
+  /usr/bin/jq -S --arg user "$target_user" '
+    def controlled_wheel:
+      (.User_List == [{"usergroup": "wheel"}]) and
+      (.Host_List == [{"hostname": "ALL"}]) and
+      (.Cmnd_Specs | length == 1) and
+      (.Cmnd_Specs[0].runasusers // [] == [{"username": "ALL"}]) and
+      (.Cmnd_Specs[0].runasgroups // [] == [{"usergroup": "ALL"}]) and
+      (.Cmnd_Specs[0].Commands == [{"command": "ALL"}]);
+    .User_Specs |= [
+      .[]
+      | if controlled_wheel then
+          (.User_List += [{"username": $user, "negated": true}]),
+          (.User_List = [{"username": $user}])
+        else . end
+    ]
+  ' "$work/sudo-policy.current.json" > "$work/sudo-policy.enabled.json"
+}
+
+derive_enabled_policy() {
+  if [[ $grant_mode == omarchy-wheel && $fresh_wheel_migration == true ]]; then
+    derive_migrated_wheel_policy
+  else
+    /usr/bin/cp -- "$work/sudo-policy.current.json" "$work/sudo-policy.enabled.json"
+  fi
+}
+
+validate_managed_policy() {
+  local managed_count general_count
+
+  managed_count=$(/usr/bin/jq --arg user "$target_user" --arg mode "$grant_mode" '
+    [
+      .User_Specs[]?
+      | select(.User_List == [{"username": $user}])
+      | select(.Host_List == [{"hostname": "ALL"}])
+      | .Cmnd_Specs[]?
+      | select((.runasusers // []) == [{"username": "ALL"}])
+      | select(if $mode == "omarchy-wheel" then
+                 (.runasgroups // []) == [{"usergroup": "ALL"}]
+               else ((.runasgroups // []) | length) == 0 end)
+      | select(.Commands == [{"command": "ALL"}])
+    ] | length
+  ' "$work/sudo-policy.enabled.json")
+  [[ $managed_count == 1 ]] || fail "the effective sudo policy does not contain exactly one managed general grant"
+
+  general_count=$(/usr/bin/jq --arg user "$target_user" '
+    [
+      .User_Specs[]?
+      | select(.User_List != [
+          {"usergroup": "wheel"},
+          {"username": $user, "negated": true}
+        ])
+      | .Cmnd_Specs[]?.Commands[]?
+      | select(.command == "ALL")
+    ] | length
+  ' "$work/sudo-policy.enabled.json")
+  [[ $general_count == 1 ]] ||
+    fail "another matching sudo rule grants or manipulates ALL; refusing an incomplete Secure Mode"
+}
+
+screen_retained_delegations() {
+  local command executable basename delegation_kind
+
+  while IFS= read -r command; do
+    [[ $command != ALL ]] || continue
+    executable=${command%% *}
+    [[ $executable == /* ]] || fail "retained sudo command is not an absolute path: $command"
+    if [[ $executable == *'*'* || $executable == *'?'* || $executable == *'['* ]]; then
+      fail "retained sudo command uses a wildcard executable: $command"
+    fi
+    basename=${executable##*/}
+    case "$basename" in
+      sh|bash|dash|zsh|fish|env|python*|perl*|ruby*|node*|\
+      vi|vim|nvim|less|more|man|sudo|sudoedit|su|doas|\
+      tee|cp|mv|install|chmod|chown|mount|nsenter|unshare|\
+      docker|podman|pacman|make|gcc|cc|clang|gdb|find|tar|rsync)
+        fail "retained sudo command is general-purpose or shell-escapable: $command"
+        ;;
+    esac
+    if [[ $command == "$executable" ]]; then
+      delegation_kind="any arguments"
+    elif [[ $command == *'*'* || $command == *'?'* || $command == *'['* ]]; then
+      delegation_kind="argument pattern"
+    else
+      delegation_kind="exact arguments"
+    fi
+    printf 'Retained sudo delegation (%s): %s\n' "$delegation_kind" "$command"
+  done < <(/usr/bin/jq -r '.User_Specs[]?.Cmnd_Specs[]?.Commands[]?.command' \
+    "$work/sudo-policy.enabled.json")
+}
+
+derive_disabled_policy() {
+  /usr/bin/jq -S --arg user "$target_user" --arg mode "$grant_mode" '
+    def controlled:
+      ((.runasusers // []) == [{"username": "ALL"}]) and
+      (if $mode == "omarchy-wheel" then
+         (.runasgroups // []) == [{"usergroup": "ALL"}]
+       else ((.runasgroups // []) | length) == 0 end) and
+      (.Commands == [{"command": "ALL"}]);
+    .User_Specs |= map(
+      if (.User_List == [{"username": $user}]) and
+         (.Host_List == [{"hostname": "ALL"}]) then
+        .Cmnd_Specs |= map(select(controlled | not))
+      else . end
+    )
+    | .User_Specs |= map(select((.Cmnd_Specs | length) > 0))
+  ' "$work/sudo-policy.enabled.json" > "$work/sudo-policy.disabled.json"
+}
+
+create_policy_snapshots() {
+  capture_current_policy
+  derive_enabled_policy
+  validate_managed_policy
+  screen_retained_delegations
+  derive_disabled_policy
+  /usr/bin/rm -f -- "$work/sudo-policy.current.json"
+  /usr/bin/chown root:root "$work"/sudo-policy.*.json
+  /usr/bin/chmod 0600 "$work"/sudo-policy.*.json
+}
+
+run_preflight() {
+  command -v /usr/bin/cvtsudoers >/dev/null || fail "cvtsudoers is required"
+  command -v /usr/bin/jq >/dev/null || fail "jq is required"
+  command -v /usr/bin/pkcheck >/dev/null || fail "pkcheck is required"
+  command -v /usr/bin/pkaction >/dev/null || fail "pkaction is required"
+  command -v /usr/bin/visudo >/dev/null || fail "visudo is required"
+  check_sudo_policy_backend
+  select_grant_mode
+  [[ ! -e $work && ! -L $work ]] || fail "privileged preflight output already exists"
+  /usr/bin/install -d -o root -g root -m 0700 "$work"
+  render_templates
+  /usr/bin/visudo -cf "$work/sudoers.template" >/dev/null ||
+    fail "the prospective managed grant fails visudo validation"
+  if [[ $grant_mode == omarchy-wheel ]]; then
+    /usr/bin/visudo -cf "$work/omarchy-wheel.managed" >/dev/null ||
+      fail "the prospective Omarchy wheel grant fails visudo validation"
+  fi
+  /usr/bin/visudo -c >/dev/null || fail "the complete sudoers policy is invalid"
+  check_rule_precedence
+  create_policy_snapshots
+  write_preflight_plan "$work/plan"
+}
+
+[[ $EUID == 0 ]] || bootstrap_fail "this maintenance command must run as root"
+(( $# == 9 )) || usage
+mode=$1
+[[ $mode == check || $mode == prepare ]] || usage
+[[ $2 == --stage && $4 == --user && $6 == --commit && $8 == --digest ]] || usage
+stage=$3
+requested_user=$5
+source_commit=$7
+payload_digest=$9
+work=$stage/generated
+
+check_stage
+initialize_target_account "$requested_user"
+run_preflight
+if [[ $mode == check ]]; then
+  echo "Privileged read-only preflight passed for $target_user."
+fi

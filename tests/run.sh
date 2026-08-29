@@ -7,11 +7,19 @@ project_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
 bash -n \
   "$project_root/lib/source-origin.sh" \
   "$project_root/setup.sh" \
-  "$project_root/bin/omarchy-escalock-maintain" \
+  "$project_root/bin/omarchy-escalock-maint-common" \
+  "$project_root/bin/omarchy-escalock-maint-grant" \
+  "$project_root/bin/omarchy-escalock-maint-transaction" \
+  "$project_root/bin/omarchy-escalock-maint-preflight" \
+  "$project_root/bin/omarchy-escalock-maint-install" \
+  "$project_root/bin/omarchy-escalock-maint-uninstall" \
   "$project_root/bin/omarchy-escalock" \
   "$project_root/bin/omarchy-escalock-onboard" \
   "$project_root/tests/test_helper.sh" \
   "$project_root/tests/test_grant_discovery.sh" \
+  "$project_root/tests/test_maintenance_layout.sh" \
+  "$project_root/tests/test_maintenance_plan.sh" \
+  "$project_root/tests/test_maintenance_transaction.sh" \
   "$project_root/tests/test_cli.sh" \
   "$project_root/tests/test_onboarding.sh" \
   "$project_root/tests/test_setup_options.sh" \
@@ -36,6 +44,9 @@ node "$project_root/tests/test_rules.js"
 node "$project_root/tests/test_state_model.js"
 "$project_root/tests/test_helper.sh"
 "$project_root/tests/test_grant_discovery.sh"
+"$project_root/tests/test_maintenance_layout.sh"
+"$project_root/tests/test_maintenance_plan.sh"
+"$project_root/tests/test_maintenance_transaction.sh"
 "$project_root/tests/test_cli.sh"
 "$project_root/tests/test_onboarding.sh"
 "$project_root/tests/test_setup_options.sh"

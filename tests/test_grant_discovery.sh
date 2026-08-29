@@ -17,24 +17,26 @@ probe="$test_root/omarchy-escalock-grant-probe"
 mkdir -p "$sudoers_dir"
 chmod 0750 "$sudoers_dir"
 
-# Exercise the maintainer's real discovery and configuration functions against
-# an unprivileged temporary tree. Only fixed path and trusted-owner constants
-# are changed; the probe exits before any maintenance operation can run.
-sed \
-  -e "s|^readonly config_dir=.*|readonly config_dir=$config_dir|" \
-  -e "s|^readonly sudoers_dir=.*|readonly sudoers_dir=$sudoers_dir|" \
-  -e "s|^readonly wheel_grant=.*|readonly wheel_grant=$wheel_grant|" \
-  -e 's/^\[\[ \$EUID == 0 \]\].*/true/' \
-  -e "s/== 0:0:600/== $target_uid:$target_gid:600/g" \
-  -e "s/== 0:0:440/== $target_uid:$target_gid:440/g" \
-  -e "s/== 0:0:700/== $target_uid:$target_gid:700/g" \
-  -e "s/== 0:\*:\*/== $target_uid:\*:\*/g" \
-  -e '/^check_sudo_policy_backend() {/i\
-select_grant_mode\
-/usr/bin/printf '\''RESULT %s %s %s\\n'\'' "$grant_mode" "$grant_basename" "$grant"\
-exit 0\
-' \
-  "$project_root/bin/omarchy-escalock-maintain" > "$probe"
+# Exercise the real shared grant-discovery functions against an unprivileged
+# temporary tree. Only fixed system roots and trusted-owner expectations are
+# changed; no maintenance entry point is executed.
+{
+  printf '#!/bin/bash\nset -euo pipefail\nreadonly escalock_program=grant-probe\n'
+  sed \
+    -e "s|^readonly config_dir=.*|readonly config_dir=$config_dir|" \
+    -e "s|^readonly sudoers_dir=.*|readonly sudoers_dir=$sudoers_dir|" \
+    -e "s|^readonly wheel_grant=.*|readonly wheel_grant=$wheel_grant|" \
+    -e "s/== 0:0:600/== $target_uid:$target_gid:600/g" \
+    -e "s/== 0:0:440/== $target_uid:$target_gid:440/g" \
+    -e "s/== 0:0:700/== $target_uid:$target_gid:700/g" \
+    -e "s/== 0:\*:\*/== $target_uid:\*:\*/g" \
+    "$project_root/bin/omarchy-escalock-maint-common" \
+    "$project_root/bin/omarchy-escalock-maint-grant"
+  printf '%s\n' \
+    'initialize_target_account "${1:-}"' \
+    'select_grant_mode' \
+    '/usr/bin/printf '\''RESULT %s %s %s\n'\'' "$grant_mode" "$grant_basename" "$grant"'
+} > "$probe"
 chmod 0755 "$probe"
 
 reset_layout() {
@@ -58,7 +60,7 @@ write_wheel() {
 expect_probe() {
   local mode=$1 basename=$2 output
 
-  output=$("$probe" probe --user "$target_user" 2>&1)
+  output=$("$probe" "$target_user" 2>&1)
   /usr/bin/grep -Fxq \
     "RESULT $mode $basename $sudoers_dir/$basename" <<< "$output"
 }
@@ -66,7 +68,7 @@ expect_probe() {
 expect_failure() {
   local expected=$1 output
 
-  if output=$("$probe" probe --user "$target_user" 2>&1); then
+  if output=$("$probe" "$target_user" 2>&1); then
     echo "grant probe unexpectedly succeeded: $output" >&2
     exit 1
   fi
@@ -153,4 +155,4 @@ printf 'TARGET_USER=%s\nTARGET_UID=%s\nGRANT_MODE=omarchy-wheel\n' \
 chmod 0600 "$config_dir/config"
 expect_probe omarchy-wheel "00_$target_user"
 
-echo "maintainer grant-discovery tests passed"
+echo "maintenance grant-discovery tests passed"

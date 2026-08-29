@@ -3,7 +3,7 @@
 set -euo pipefail
 
 readonly helper=/usr/local/libexec/omarchy-escalock-helper
-readonly maintainer=/usr/local/libexec/omarchy-escalock-maintain
+readonly uninstaller=/usr/local/libexec/omarchy-escalock-maint-uninstall
 readonly pkexec=/usr/bin/pkexec
 readonly sudo=/usr/bin/sudo
 readonly omarchy=/usr/share/omarchy/bin/omarchy
@@ -88,13 +88,13 @@ uninstall_escalock() {
     echo "Administrator Mode could not be verified ON." >&2
     return 1
   }
-  [[ -x $maintainer ]] || {
-    echo "The installed maintenance tool is missing; preserving system files." >&2
+  [[ -x $uninstaller ]] || {
+    echo "The installed uninstall tool is missing; preserving system files." >&2
     return 1
   }
 
   "$omarchy" plugin disable "$plugin_id" 2>/dev/null || true
-  "$sudo" -- "$maintainer" uninstall --user "$target_user"
+  "$sudo" -- "$uninstaller" --user "$target_user"
   if "$omarchy" plugin remove "$plugin_id" --yes; then
     echo "Removed the EscaLock plugin checkout."
   else

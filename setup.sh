@@ -110,7 +110,12 @@ fi
 payload_files=(
   build/omarchy-escalock-helper
   bin/omarchy-escalock
-  bin/omarchy-escalock-maintain
+  bin/omarchy-escalock-maint-common
+  bin/omarchy-escalock-maint-grant
+  bin/omarchy-escalock-maint-transaction
+  bin/omarchy-escalock-maint-preflight
+  bin/omarchy-escalock-maint-install
+  bin/omarchy-escalock-maint-uninstall
   manifest.json
   polkit/00-00-omarchy-escalock-on.rules.in
   polkit/00-00-omarchy-escalock-off.rules.in
@@ -134,7 +139,7 @@ EscaLock privileged setup
   Origin:  ${origin_url:-local development checkout}
   User:    $target_user
 
-The next step installs a setuid status helper, a root-owned maintenance tool,
+The next step installs a setuid status helper, root-owned maintenance components,
 sudo policy snapshots, and Polkit policy. Administrator Mode remains ON.
 Review this repository and preserve the recovery backup before continuing.
 EOF
@@ -165,7 +170,12 @@ actual_digest=${actual_digest%% *}
 expected_members=(
   build/omarchy-escalock-helper
   bin/omarchy-escalock
-  bin/omarchy-escalock-maintain
+  bin/omarchy-escalock-maint-common
+  bin/omarchy-escalock-maint-grant
+  bin/omarchy-escalock-maint-transaction
+  bin/omarchy-escalock-maint-preflight
+  bin/omarchy-escalock-maint-install
+  bin/omarchy-escalock-maint-uninstall
   manifest.json
   polkit/00-00-omarchy-escalock-on.rules.in
   polkit/00-00-omarchy-escalock-off.rules.in
@@ -191,8 +201,20 @@ done
 /usr/bin/tar -C "$stage/payload" --no-same-owner --no-same-permissions -xf "$stage/payload.tar"
 /usr/bin/chown -R root:root "$stage/payload"
 /usr/bin/chmod 0700 "$stage/payload"
-"$stage/payload/bin/omarchy-escalock-maintain" "$operation" \
-  --stage "$stage/payload" --user "$target_user" --commit "$source_commit" --digest "$expected_digest"'
+case "$operation" in
+  check)
+    "$stage/payload/bin/omarchy-escalock-maint-preflight" check \
+      --stage "$stage/payload" --user "$target_user" --commit "$source_commit" --digest "$expected_digest"
+    ;;
+  install)
+    "$stage/payload/bin/omarchy-escalock-maint-install" \
+      --stage "$stage/payload" --user "$target_user" --commit "$source_commit" --digest "$expected_digest"
+    ;;
+  *)
+    echo "EscaLock bootstrap received an invalid operation" >&2
+    exit 2
+    ;;
+esac'
 
 root_operation=install
 [[ $check_only == false ]] || root_operation=check

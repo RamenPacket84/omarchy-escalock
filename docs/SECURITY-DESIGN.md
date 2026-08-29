@@ -54,7 +54,12 @@ archive containing exactly:
 ```text
 build/omarchy-escalock-helper
 bin/omarchy-escalock
-bin/omarchy-escalock-maintain
+bin/omarchy-escalock-maint-common
+bin/omarchy-escalock-maint-grant
+bin/omarchy-escalock-maint-transaction
+bin/omarchy-escalock-maint-preflight
+bin/omarchy-escalock-maint-install
+bin/omarchy-escalock-maint-uninstall
 manifest.json
 polkit/00-00-omarchy-escalock-on.rules.in
 polkit/00-00-omarchy-escalock-off.rules.in
@@ -64,9 +69,11 @@ polkit/com.github.andrewbacon.omarchy-escalock.policy
 The sudo handoff copies this archive to a newly created root-owned mode-0700
 directory, recomputes its SHA-256, and requires the exact ordered member list
 and regular-file type before extraction. The staged tree is root-owned before
-the staged maintenance tool runs. No privileged code resolves a path below the
-target user's home, so checkout symlinks and same-user replacement after the
-handoff cannot redirect root file operations.
+the fixed `check` or `install` entry point runs. The bootstrap uses an explicit
+operation `case`; it never derives an executable path from user input. No
+privileged code resolves a path below the target user's home, so checkout
+symlinks and same-user replacement after the handoff cannot redirect root file
+operations.
 
 This prevents a time-of-check/time-of-use substitution after confirmation. It
 does not make a malicious reviewed commit safe, authenticate a GitHub account,
@@ -96,12 +103,29 @@ command, environment-selected executable, policy, or shell fragment. Child
 validators use fixed absolute executables with a cleared environment. The
 production binary is checked for test-only hooks before installation.
 
-`/usr/local/libexec/omarchy-escalock-maintain` is root-owned but not setuid. It
-is reached through sudo only for explicit setup/check/uninstall. It operates on
-fixed system roots, one strictly validated sudoers basename, and a verified
-root-owned staging directory. Installation and removal create root-only
-backups and use exit traps to restore the prior recovery path after a partial
-failure.
+Privileged lifecycle maintenance is intentionally divided into bounded
+components:
+
+| Component | Lifetime | Responsibility |
+| --- | --- | --- |
+| `omarchy-escalock-maint-preflight` | Root-owned staging only | Read-only account, payload, sudo, grant, and Polkit validation; creates a root-owned plan and policy snapshots inside staging |
+| `omarchy-escalock-maint-install` | Root-owned staging only | Revalidates the plan, backs up the current installation, installs or upgrades fixed paths, and owns install rollback |
+| `omarchy-escalock-maint-uninstall` | Installed root-owned, not setuid | Verifies Administrator Mode and protected templates, backs up fixed paths, removes them, and owns uninstall rollback |
+| `maint-common`, `maint-grant`, and `maint-transaction` | Root-owned modules | Account/config parsing, sudo-grant discovery, and fixed-path backup/restore primitives used only by the applicable entry point |
+
+The plan is parsed as five fixed data lines; it is never evaluated or sourced
+as shell code. The installer repeats grant discovery after preflight and
+requires the account, UID, grant mode, basename, and migration state to remain
+identical before changing a system path.
+
+Setup reaches preflight or install only through its verified root staging
+directory. The installed CLI reaches the fixed uninstall executable through
+sudo only after it has restored and verified Administrator Mode. These tools
+operate on fixed system roots and one strictly validated sudoers basename.
+Installation and removal create root-only backups and use operation-local exit
+traps to restore the prior recovery path after a partial failure. Upgrading
+from 2.0.3 removes the former multi-operation
+`/usr/local/libexec/omarchy-escalock-maintain` executable transactionally.
 
 ## Polkit policy and precedence
 

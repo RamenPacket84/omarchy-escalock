@@ -1,0 +1,163 @@
+#!/bin/bash
+
+set -euo pipefail
+umask 077
+export LC_ALL=C
+
+readonly escalock_program=omarchy-escalock-maint-install
+readonly script_path=${BASH_SOURCE[0]}
+readonly script_dir=$(cd -- "$(/usr/bin/dirname -- "$script_path")" && pwd -P)
+
+bootstrap_fail() {
+  echo "$escalock_program: $*" >&2
+  exit 1
+}
+
+module_is_safe() {
+  local module=$1 metadata mode
+
+  [[ -f $module && ! -L $module ]] || return 1
+  metadata=$(/usr/bin/stat -c '%u:%g:%a' "$module") || return 1
+  [[ $metadata == 0:0:* ]] || return 1
+  mode=${metadata##*:}
+  (( (8#$mode & 0022) == 0 ))
+}
+
+directory_is_safe() {
+  local directory=$1 metadata mode
+
+  [[ -d $directory && ! -L $directory ]] || return 1
+  metadata=$(/usr/bin/stat -c '%u:%g:%a' "$directory") || return 1
+  [[ $metadata == 0:0:* ]] || return 1
+  mode=${metadata##*:}
+  (( (8#$mode & 0022) == 0 ))
+}
+
+readonly common_module="$script_dir/omarchy-escalock-maint-common"
+readonly grant_module="$script_dir/omarchy-escalock-maint-grant"
+readonly transaction_module="$script_dir/omarchy-escalock-maint-transaction"
+readonly preflight="$script_dir/omarchy-escalock-maint-preflight"
+directory_is_safe "$script_dir" || bootstrap_fail "privileged component directory is unsafe"
+for module in "$common_module" "$grant_module" "$transaction_module" "$preflight"; do
+  module_is_safe "$module" || bootstrap_fail "privileged component is unsafe: $module"
+done
+# shellcheck source=bin/omarchy-escalock-maint-common
+source "$common_module"
+# shellcheck source=bin/omarchy-escalock-maint-grant
+source "$grant_module"
+# shellcheck source=bin/omarchy-escalock-maint-transaction
+source "$transaction_module"
+
+usage() {
+  echo "Usage: $escalock_program --stage DIR --user USER --commit SHA --digest SHA256" >&2
+  exit 2
+}
+
+rollback_install() {
+  local rc=$?
+
+  trap - EXIT
+  if (( rc != 0 )) && [[ $install_committed == false ]]; then
+    restore_previous_install "$backup_dir"
+  fi
+  exit "$rc"
+}
+
+install_configuration() {
+  /usr/bin/install -d -o root -g root -m 0700 "$config_dir"
+  /usr/bin/printf 'TARGET_USER=%s\nTARGET_UID=%s\nGRANT_MODE=%s\nGRANT_BASENAME=%s\n' \
+    "$target_user" "$target_uid" "$grant_mode" "$grant_basename" > "$work/config"
+  /usr/bin/printf 'VERSION=%s\nSOURCE_COMMIT=%s\nPAYLOAD_SHA256=%s\n' \
+    "$(/usr/bin/jq -er '.version' "$stage/manifest.json")" "$source_commit" "$payload_digest" \
+    > "$work/install-metadata"
+  /usr/bin/install -o root -g root -m 0600 "$work/config" "$config_dir/config"
+  /usr/bin/install -o root -g root -m 0600 "$work/install-metadata" "$config_dir/install-metadata"
+  /usr/bin/install -o root -g root -m 0440 "$work/sudoers.template" "$config_dir/sudoers.template"
+  if [[ $grant_mode == omarchy-wheel ]]; then
+    /usr/bin/install -o root -g root -m 0440 "$work/omarchy-wheel.original" "$config_dir/omarchy-wheel.original"
+    /usr/bin/install -o root -g root -m 0440 "$work/omarchy-wheel.managed" "$config_dir/omarchy-wheel.managed"
+    /usr/bin/install -o root -g root -m 0440 "$work/sudoers.template" "$grant"
+    /usr/bin/install -o root -g root -m 0440 "$work/omarchy-wheel.managed" "$wheel_grant"
+  else
+    /usr/bin/rm -f -- "$config_dir/omarchy-wheel.original" "$config_dir/omarchy-wheel.managed"
+  fi
+  /usr/bin/visudo -c >/dev/null || fail "sudoers became invalid while preparing the managed grant"
+  /usr/bin/install -o root -g root -m 0644 "$work/rule.on" \
+    "$config_dir/00-00-omarchy-escalock-on.rules.template"
+  /usr/bin/install -o root -g root -m 0644 "$work/rule.off" \
+    "$config_dir/00-00-omarchy-escalock-off.rules.template"
+  /usr/bin/install -o root -g root -m 0600 "$work/sudo-policy.enabled.json" \
+    "$config_dir/sudo-policy.enabled.json"
+  /usr/bin/install -o root -g root -m 0600 "$work/sudo-policy.disabled.json" \
+    "$config_dir/sudo-policy.disabled.json"
+  /usr/bin/install -o root -g root -m 0644 \
+    "$stage/polkit/com.github.andrewbacon.omarchy-escalock.policy" \
+    "$config_dir/com.github.andrewbacon.omarchy-escalock.policy.template"
+}
+
+install_runtime() {
+  /usr/bin/install -o root -g root -m 0644 \
+    "$stage/polkit/com.github.andrewbacon.omarchy-escalock.policy" "$policy_file"
+  /usr/bin/install -o root -g root -m 0644 "$work/rule.on" "$rule_file"
+  /usr/bin/install -d -o root -g root -m 0755 /usr/local/libexec
+  /usr/bin/install -o root -g root -m 04755 "$stage/build/omarchy-escalock-helper" "$helper"
+  /usr/bin/install -o root -g root -m 0755 "$stage/bin/omarchy-escalock" "$cli"
+  /usr/bin/install -o root -g root -m 0644 "$common_module" "$installed_common"
+  /usr/bin/install -o root -g root -m 0644 "$grant_module" "$installed_grant"
+  /usr/bin/install -o root -g root -m 0644 "$transaction_module" "$installed_transaction"
+  /usr/bin/install -o root -g root -m 0755 \
+    "$stage/bin/omarchy-escalock-maint-uninstall" "$uninstaller"
+  /usr/bin/rm -f -- "$legacy_maintainer" "$legacy_recovery_rule" "$legacy_off_rule" \
+    "$legacy_manage_rule" "$config_dir/05-omarchy-escalock-recovery.rules.template" \
+    "$config_dir/10-omarchy-escalock-off.rules.template" \
+    "$config_dir/20-omarchy-escalock-manage.rules.template"
+}
+
+[[ $EUID == 0 ]] || bootstrap_fail "this maintenance command must run as root"
+(( $# == 8 )) || usage
+[[ $1 == --stage && $3 == --user && $5 == --commit && $7 == --digest ]] || usage
+stage=$2
+requested_user=$4
+source_commit=$6
+payload_digest=$8
+work=$stage/generated
+
+"$preflight" prepare --stage "$stage" --user "$requested_user" \
+  --commit "$source_commit" --digest "$payload_digest"
+verify_preflight_plan "$work/plan" "$requested_user"
+
+if [[ -e $config_dir ]]; then
+  [[ -d $config_dir && ! -L $config_dir ]] || fail "existing configuration path is unsafe"
+  config_belongs_to_target || fail "existing EscaLock configuration belongs to another account or is invalid"
+  [[ -x $helper ]] || fail "existing helper is missing"
+  current_state=$(PKEXEC_UID="$target_uid" "$helper" status) || fail "existing helper could not verify state"
+  [[ $current_state == enabled ]] || fail "Administrator Mode must be ON before setup or upgrade"
+else
+  for path in "${system_paths[@]}"; do
+    [[ ! -e $path && ! -L $path ]] || fail "unexpected existing EscaLock system file: $path"
+  done
+fi
+
+timestamp=$(/usr/bin/date -u +%Y%m%dT%H%M%SZ)
+backup_dir="$backup_root/$timestamp-install-$$"
+/usr/bin/install -d -o root -g root -m 0700 "$backup_dir"
+if [[ -d $config_dir && ! -L $config_dir ]]; then
+  /usr/bin/cp -a -- "$config_dir" "$backup_dir/config.before"
+fi
+backup_system_files "$backup_dir/system"
+
+install_committed=false
+trap rollback_install EXIT
+install_configuration
+install_runtime
+/usr/bin/pkaction --action-id com.github.andrewbacon.omarchy-escalock.enable >/dev/null
+/usr/bin/pkaction --action-id com.github.andrewbacon.omarchy-escalock.disable >/dev/null
+installed_state=$(PKEXEC_UID="$target_uid" "$helper" enable) ||
+  fail "installed helper could not verify the active ON policy"
+[[ $installed_state == enabled ]] || fail "post-install state is $installed_state, expected enabled"
+/usr/bin/visudo -c >/dev/null || fail "sudoers became invalid during installation"
+
+install_committed=true
+trap - EXIT
+echo "Installed EscaLock $("$helper" version) for $target_user from commit $source_commit."
+echo "Administrator Mode remains ON. Backup: $backup_dir"

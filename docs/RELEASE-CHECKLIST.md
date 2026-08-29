@@ -13,6 +13,10 @@ repository.
 - Run GCC `-fanalyzer` and Clang static analysis for helper changes.
 - Review the complete diff, especially setuid, sudoers, and Polkit changes.
 - Confirm the README install command names the canonical GitHub repository.
+- Confirm each privileged maintenance component remains within the static
+  analysis budget enforced by `tests/test_maintenance_layout.sh`.
+- Confirm the unprivileged and root-side payload lists are identical and
+  contain no wildcard members.
 
 ## Privileged preflight
 
@@ -25,6 +29,8 @@ Run on a current Omarchy 4 system with Administrator Mode ON:
 - Confirm the detected sudo grant is the expected file.
 - Review every retained command-specific sudo delegation.
 - Confirm the preflight makes no persistent system changes.
+- Confirm the generated preflight plan is root-owned, mode 0600, and rejected
+  if its account, grant basename, or migration state changes before install.
 
 ## Live lifecycle test
 
