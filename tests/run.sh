@@ -6,6 +6,7 @@ project_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
 
 bash -n \
   "$project_root/lib/source-origin.sh" \
+  "$project_root/lib/widget-reload.sh" \
   "$project_root/setup.sh" \
   "$project_root/bin/omarchy-escalock-maint-common" \
   "$project_root/bin/omarchy-escalock-maint-grant" \
@@ -23,7 +24,8 @@ bash -n \
   "$project_root/tests/test_cli.sh" \
   "$project_root/tests/test_onboarding.sh" \
   "$project_root/tests/test_setup_options.sh" \
-  "$project_root/tests/test_source_origin.sh"
+  "$project_root/tests/test_source_origin.sh" \
+  "$project_root/tests/test_widget_reload.sh"
 
 /usr/bin/xmllint --noout "$project_root/polkit/com.github.andrewbacon.omarchy-escalock.policy"
 /usr/share/omarchy/bin/omarchy plugin validate "$project_root"
@@ -51,6 +53,7 @@ node "$project_root/tests/test_state_model.js"
 "$project_root/tests/test_onboarding.sh"
 "$project_root/tests/test_setup_options.sh"
 "$project_root/tests/test_source_origin.sh"
+"$project_root/tests/test_widget_reload.sh"
 
 if rg -n '(/bin/(ba)?sh|eval[[:space:]]*\(|system[[:space:]]*\(|popen[[:space:]]*\()' \
   "$project_root/src/omarchy-escalock-helper.c"; then

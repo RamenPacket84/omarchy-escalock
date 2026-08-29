@@ -48,6 +48,14 @@ leaves a user-triggered retry in the widget. An existing helper, including a
 version mismatch, suppresses automatic onboarding so upgrades remain
 intentional.
 
+After a successful install or upgrade, the unprivileged setup phase asks the
+running Omarchy shell to rescan plugins and verifies the widget's compiled
+version through a read-only IPC method. It reloads only when the session is
+confirmed unlocked; a locked or indeterminate session is left untouched. Shell
+unavailability or reload failure does not roll back a verified privileged
+installation; setup reports the supported
+`omarchy restart shell` fallback instead.
+
 The unprivileged phase builds and validates a fixed payload. It creates a tar
 archive containing exactly:
 

@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "andrewbacon.escalock",
   "name": "EscaLock",
-  "version": "2.0.4",
+  "version": "2.0.5",
   "author": "Andrew Bacon",
   "license": "MIT",
   "description": "Secure Mode for gating subsequent sudo and Polkit administrator elevation",

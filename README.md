@@ -292,6 +292,17 @@ guided terminal cannot be opened, run setup from the current plugin checkout:
 For an update, Administrator Mode must be ON first. If needed, run
 `omarchy-escalock off`, then follow the commands in [Update](#update).
 
+### The update finished but the widget still requests an update
+
+Setup normally reloads the widget automatically. If the message remains after
+setup finishes, make sure the session is unlocked and run:
+
+```bash
+omarchy restart shell
+```
+
+This restarts the Omarchy bar and desktop shell, not the computer.
+
 ### Status is `inconsistent`
 
 Do not manually remove recovery files or attempt repeated transitions. Review

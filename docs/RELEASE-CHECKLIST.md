@@ -35,6 +35,10 @@ Run on a current Omarchy 4 system with Administrator Mode ON:
 ## Live lifecycle test
 
 - Install or upgrade with `./setup.sh` and retain the printed backup path.
+- Confirm setup reloads the enabled widget and its update message clears
+  without a reboot.
+- Confirm a locked or unavailable shell skips the reload without undoing the
+  successful privileged installation.
 - Confirm `omarchy-escalock version` reports the expected version.
 - Confirm the initial status is `off`.
 - Turn Secure Mode on and confirm status is `on`.

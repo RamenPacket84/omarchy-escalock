@@ -23,7 +23,7 @@ Panel {
   readonly property string helper: "/usr/local/libexec/omarchy-escalock-helper"
   readonly property string onboardingLauncher: Quickshell.env("HOME")
     + "/.config/omarchy/plugins/andrewbacon.escalock/bin/omarchy-escalock-onboard"
-  readonly property string expectedSystemVersion: "2.0.4"
+  readonly property string expectedSystemVersion: "2.0.5"
   readonly property string setupState: StateModel.setupState(versionChecked,
     helperPresent, installedSystemVersion, expectedSystemVersion)
   readonly property bool setupMissing: setupState === "missing"
@@ -253,6 +253,7 @@ Panel {
 
   IpcHandler {
     target: root.ipcTarget
+    function version(): string { return root.expectedSystemVersion }
     function open() { root.open() }
     function close() { root.close() }
     function toggle() { root.requestToggle() }

@@ -8,6 +8,7 @@ readonly project_root=$(cd -- "$(/usr/bin/dirname -- "${BASH_SOURCE[0]}")" && pw
 readonly omarchy=/usr/share/omarchy/bin/omarchy
 readonly plugin_id=andrewbacon.escalock
 readonly origin_policy="$project_root/lib/source-origin.sh"
+readonly widget_reload_policy="$project_root/lib/widget-reload.sh"
 
 readonly target_user=$(/usr/bin/id -un)
 enable_plugin=false
@@ -34,8 +35,12 @@ USAGE
 }
 
 [[ -f $origin_policy && ! -L $origin_policy ]] || fail "source-origin policy is missing or unsafe"
+[[ -f $widget_reload_policy && ! -L $widget_reload_policy ]] ||
+  fail "widget-reload policy is missing or unsafe"
 # shellcheck source=lib/source-origin.sh
 source "$origin_policy"
+# shellcheck source=lib/widget-reload.sh
+source "$widget_reload_policy"
 
 while (( $# > 0 )); do
   case "$1" in
@@ -66,7 +71,8 @@ done
 
 for command_path in /usr/bin/awk /usr/bin/cvtsudoers /usr/bin/gcc /usr/bin/git \
   /usr/bin/grep /usr/bin/jq /usr/bin/make /usr/bin/pkaction /usr/bin/pkcheck \
-  /usr/bin/sed /usr/bin/sha256sum /usr/bin/strings /usr/bin/sudo /usr/bin/tar \
+  /usr/bin/omarchy-hyprland-session-locked /usr/bin/omarchy-shell /usr/bin/sed \
+  /usr/bin/sha256sum /usr/bin/sleep /usr/bin/strings /usr/bin/sudo /usr/bin/tar \
   /usr/bin/visudo /usr/bin/xmllint; do
   [[ -x $command_path ]] || fail "required command is missing: $command_path"
 done
@@ -232,3 +238,4 @@ if [[ $enable_plugin == true ]]; then
 else
   echo "System setup is complete. Enable the widget with: omarchy plugin enable $plugin_id"
 fi
+omarchy_escalock_refresh_widget "$version" "$plugin_id"

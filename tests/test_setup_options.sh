@@ -17,4 +17,21 @@ for deprecated in --upgrade --dry-run --user; do
   fi
 done
 
+check_exit_line=$(/usr/bin/grep -nF \
+  'EscaLock setup check completed without installing system files.' "$setup")
+check_exit_line=${check_exit_line%%:*}
+widget_reload_line=$(/usr/bin/grep -nF \
+  'omarchy_escalock_refresh_widget "$version" "$plugin_id"' "$setup")
+widget_reload_line=${widget_reload_line%%:*}
+(( check_exit_line < widget_reload_line )) || {
+  echo "setup check mode can reach the widget reload path" >&2
+  exit 1
+}
+plugin_enable_line=$(/usr/bin/grep -nF '$omarchy plugin enable "$plugin_id"' "$setup")
+plugin_enable_line=${plugin_enable_line%%:*}
+(( plugin_enable_line < widget_reload_line )) || {
+  echo "setup reloads the widget before enabling it" >&2
+  exit 1
+}
+
 echo "setup option tests passed"
