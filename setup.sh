@@ -71,9 +71,9 @@ done
 
 for command_path in /usr/bin/awk /usr/bin/cvtsudoers /usr/bin/gcc /usr/bin/git \
   /usr/bin/grep /usr/bin/jq /usr/bin/make /usr/bin/pkaction /usr/bin/pkcheck \
-  /usr/bin/omarchy-hyprland-session-locked /usr/bin/omarchy-shell /usr/bin/sed \
-  /usr/bin/sha256sum /usr/bin/sleep /usr/bin/strings /usr/bin/sudo /usr/bin/tar \
-  /usr/bin/visudo /usr/bin/xmllint; do
+  /usr/bin/omarchy-hyprland-session-locked /usr/bin/omarchy-restart-shell \
+  /usr/bin/omarchy-shell /usr/bin/sed /usr/bin/sha256sum /usr/bin/sleep \
+  /usr/bin/strings /usr/bin/sudo /usr/bin/tar /usr/bin/visudo /usr/bin/xmllint; do
   [[ -x $command_path ]] || fail "required command is missing: $command_path"
 done
 [[ -x $omarchy ]] || fail "Omarchy is not installed"

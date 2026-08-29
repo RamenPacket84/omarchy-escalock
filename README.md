@@ -294,8 +294,10 @@ For an update, Administrator Mode must be ON first. If needed, run
 
 ### The update finished but the widget still requests an update
 
-Setup normally reloads the widget automatically. If the message remains after
-setup finishes, make sure the session is unlocked and run:
+Setup normally restarts the Omarchy shell so the updated widget loads
+immediately. The bar briefly disappears and returns; the computer does not
+reboot. If the message remains after setup finishes, make sure the session is
+unlocked and run:
 
 ```bash
 omarchy restart shell

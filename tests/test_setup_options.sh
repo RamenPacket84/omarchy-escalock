@@ -30,7 +30,11 @@ widget_reload_line=${widget_reload_line%%:*}
 plugin_enable_line=$(/usr/bin/grep -nF '$omarchy plugin enable "$plugin_id"' "$setup")
 plugin_enable_line=${plugin_enable_line%%:*}
 (( plugin_enable_line < widget_reload_line )) || {
-  echo "setup reloads the widget before enabling it" >&2
+  echo "setup refreshes the widget before enabling it" >&2
+  exit 1
+}
+/usr/bin/grep -Fq '/usr/bin/omarchy-restart-shell' "$setup" || {
+  echo "setup does not require the supported Omarchy shell restart command" >&2
   exit 1
 }
 
