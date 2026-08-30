@@ -60,7 +60,7 @@
 #define JQ "/usr/bin/jq"
 #define RULE_BASENAME "00-00-omarchy-escalock.rules"
 #define MAX_FILE_SIZE (1024U * 1024U)
-#define ESCALOCK_VERSION "2.0.6"
+#define ESCALOCK_VERSION "2.0.7"
 
 enum grant_mode {
     GRANT_DEDICATED,

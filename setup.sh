@@ -236,6 +236,6 @@ if [[ $enable_plugin == true ]]; then
   $omarchy plugin enable "$plugin_id"
   echo "EscaLock was enabled on the Omarchy bar."
 else
-  echo "System setup is complete. Enable the widget with: omarchy plugin enable $plugin_id"
+  echo "System setup is complete. If needed, enable the widget with: omarchy plugin enable $plugin_id"
 fi
 omarchy_escalock_refresh_widget "$version" "$plugin_id"

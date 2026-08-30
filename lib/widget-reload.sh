@@ -11,7 +11,7 @@ omarchy_escalock_reload_fallback() {
 }
 
 omarchy_escalock_refresh_widget() {
-  local expected_version=$1 plugin_id=$2
+  local expected_version=$1 widget_plugin_id=$2
   local enabled_state loaded_version
   local attempt lock_result
 
@@ -21,7 +21,7 @@ omarchy_escalock_refresh_widget() {
   fi
 
   enabled_state=$("$omarchy_shell_command" shell listPlugins 2>/dev/null |
-    /usr/bin/jq -er --arg id "$plugin_id" \
+    /usr/bin/jq -er --arg id "$widget_plugin_id" \
       '.[] | select(.id == $id) | if .enabled then "enabled" else "disabled" end' \
       2>/dev/null) || enabled_state=unknown
   if [[ $enabled_state == disabled ]]; then
@@ -51,7 +51,7 @@ omarchy_escalock_refresh_widget() {
   fi
 
   for (( attempt = 0; attempt < 30; attempt++ )); do
-    loaded_version=$("$omarchy_shell_command" "$plugin_id" version 2>/dev/null || true)
+    loaded_version=$("$omarchy_shell_command" "$widget_plugin_id" version 2>/dev/null || true)
     if [[ $loaded_version == "$expected_version" ]]; then
       echo "EscaLock bar widget restarted at version $expected_version."
       return 0
