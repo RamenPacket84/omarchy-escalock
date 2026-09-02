@@ -23,7 +23,7 @@ Panel {
   readonly property string helper: "/usr/local/libexec/omarchy-escalock-helper"
   readonly property string onboardingLauncher: Quickshell.env("HOME")
     + "/.config/omarchy/plugins/andrewbacon.escalock/bin/omarchy-escalock-onboard"
-  readonly property string expectedSystemVersion: "2.1.0"
+  readonly property string expectedSystemVersion: "2.2.0"
   readonly property string setupState: StateModel.setupState(versionChecked,
     helperPresent, installedSystemVersion, expectedSystemVersion)
   readonly property bool setupMissing: setupState === "missing"
@@ -38,7 +38,9 @@ Panel {
   readonly property string stateLabel: setupMissing ? "EscaLock setup"
     : (updateRequired ? "EscaLock update" : StateModel.stateLabel(adminState))
   readonly property string actionHint: setupMissing ? "finish setup"
-    : (updateRequired ? "review the required update" : StateModel.actionHint(adminState))
+    : (updateRequired ? "finish the update"
+      : (policyReviewRequired ? "review administrator changes"
+        : StateModel.actionHint(adminState)))
   readonly property color foreground: bar ? bar.foreground : Color.foreground
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
 
@@ -62,8 +64,8 @@ Panel {
     }
     if (updateRequired) {
       adminState = "inconsistent"
-      statusMessage = "EscaLock system components must be updated to version "
-        + expectedSystemVersion + ". Restore Administrator Mode before updating."
+      statusMessage = "Finish installing EscaLock " + expectedSystemVersion
+        + ". The guided update will restore Administrator Mode if needed."
       statusError = true
       return
     }
@@ -104,10 +106,28 @@ Panel {
 
   function startPolicyReview() {
     if (onboardingProcess.running || !policyReviewRequired) return
-    statusMessage = "Review the detected sudo policy change in the opened terminal. No snapshot will change without explicit confirmation."
+    statusMessage = "Review the administrator permission changes in the opened terminal. Nothing will be approved without explicit confirmation."
     statusError = false
     close()
-    onboardingProcess.command = [onboardingLauncher, "--rebaseline"]
+    onboardingProcess.command = [onboardingLauncher, "--review-changes"]
+    onboardingProcess.running = true
+  }
+
+  function startFinishUpdate() {
+    if (onboardingProcess.running || !updateRequired) return
+    statusMessage = "Complete the EscaLock update in the opened terminal."
+    statusError = false
+    close()
+    onboardingProcess.command = [onboardingLauncher, "--finish-update"]
+    onboardingProcess.running = true
+  }
+
+  function startCheckUpdates() {
+    if (busy || setupMissing || updateRequired || policyReviewRequired) return
+    statusMessage = "Check for an EscaLock update in the opened terminal."
+    statusError = false
+    close()
+    onboardingProcess.command = [onboardingLauncher, "--update"]
     onboardingProcess.running = true
   }
 
@@ -145,7 +165,7 @@ Panel {
       adminState = value
       if (!transitionProcess.running) {
         statusMessage = value === "inconsistent"
-          ? "System sudo or Polkit policy changed. EscaLock made no transition; review the policy before authorizing a new baseline."
+          ? "Omarchy changed administrator permissions. EscaLock paused to keep you safe; review the changes before continuing."
           : StateModel.statusMessage(value)
         statusError = value === "inconsistent"
       }
@@ -316,7 +336,7 @@ Panel {
           width: parent.width
           text: root.setupMissing ? "Finish EscaLock setup"
             : (root.updateRequired ? "EscaLock update required"
-              : (root.policyReviewRequired ? "EscaLock policy review required"
+              : (root.policyReviewRequired ? "Administrator changes detected"
                 : StateModel.panelTitle(root.adminState)))
           textFormat: Text.PlainText
           color: root.foreground
@@ -355,18 +375,31 @@ Panel {
           Button {
             width: cancelButton.width
             text: root.setupMissing ? "Finish setup"
-              : (root.policyReviewRequired ? "Review policy"
-                : (root.adminState === "enabled" && !root.updateRequired ? "Turn ON" : "Refresh"))
+              : (root.updateRequired ? "Finish update"
+                : (root.policyReviewRequired ? "Review changes"
+                  : (root.adminState === "enabled" && !root.updateRequired
+                    ? "Turn ON" : "Refresh")))
             enabled: !root.busy
             foreground: root.foreground
             onClicked: {
               if (root.setupMissing) root.startSetup(false)
+              else if (root.updateRequired) root.startFinishUpdate()
               else if (root.policyReviewRequired) root.startPolicyReview()
               else if (root.adminState === "enabled" && !root.updateRequired)
                 root.runTransition("disable")
               else root.recheck()
             }
           }
+        }
+
+        Button {
+          width: parent.width
+          visible: !root.setupMissing && !root.updateRequired
+            && !root.policyReviewRequired
+          text: "Check for updates"
+          enabled: !root.busy
+          foreground: root.foreground
+          onClicked: root.startCheckUpdates()
         }
       }
     }

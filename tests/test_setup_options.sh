@@ -22,7 +22,7 @@ if "$setup" --check --rebaseline >/dev/null 2>&1; then
   echo "setup accepted mutually exclusive check and rebaseline modes" >&2
   exit 1
 fi
-/usr/bin/grep -Fq "Type 'rebaseline' to authorize exactly this policy and continue" \
+/usr/bin/grep -Fq "Type 'approve' to authorize exactly these administrator permissions and continue" \
   "$rebaseline"
 
 check_exit_line=$(/usr/bin/grep -nF \

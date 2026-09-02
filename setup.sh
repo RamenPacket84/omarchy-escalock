@@ -245,8 +245,8 @@ if [[ $check_only == true ]]; then
 else
   [[ -t 0 ]] || fail "interactive confirmation requires a terminal"
   if [[ $rebaseline == true ]]; then
-    echo "Policy rebaseline was requested. The privileged operation will list retained sudo rules,"
-    echo "verify the existing Administrator Mode structure, and ask for confirmation before changing snapshots."
+    echo "Administrator permission review was requested. The privileged operation will list retained sudo rules,"
+    echo "verify the existing Administrator Mode structure, and ask for approval before changing snapshots."
     run_root_operation rebaseline
   else
     read -r -p "Type 'install' to continue: " confirmation

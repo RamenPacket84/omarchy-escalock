@@ -8,10 +8,11 @@ readonly project_root=$(cd -- "$(/usr/bin/dirname -- "${BASH_SOURCE[0]}")/.." &&
 readonly setup="$project_root/setup.sh"
 readonly manifest="$project_root/manifest.json"
 readonly helper=/usr/local/libexec/omarchy-escalock-helper
+readonly installed_cli=/usr/local/bin/omarchy-escalock
 readonly terminal_launcher=/usr/bin/omarchy-launch-floating-terminal-with-presentation
 
-automatic=false
-rebaseline=false
+mode=
+source_changed=false
 
 fail() {
   echo "omarchy-escalock-onboard: $*" >&2
@@ -19,17 +20,38 @@ fail() {
 }
 
 usage() {
-  echo "Usage: omarchy-escalock-onboard [--automatic|--rebaseline]"
+  echo "Usage: omarchy-escalock-onboard [--automatic|--update|--finish-update|--review-changes]"
+}
+
+select_mode() {
+  [[ -z $mode ]] || fail "only one onboarding mode may be selected"
+  mode=$1
 }
 
 while (( $# > 0 )); do
   case "$1" in
     --automatic)
-      automatic=true
+      select_mode automatic
       shift
       ;;
-    --rebaseline)
-      rebaseline=true
+    --update)
+      select_mode update
+      shift
+      ;;
+    --finish-update)
+      select_mode finish-update
+      shift
+      ;;
+    --review-changes | --rebaseline)
+      select_mode review-changes
+      shift
+      ;;
+    --run-finish-update)
+      select_mode run-finish-update
+      shift
+      ;;
+    --source-changed)
+      source_changed=true
       shift
       ;;
     -h | --help)
@@ -43,27 +65,80 @@ while (( $# > 0 )); do
   esac
 done
 
-[[ $automatic == false || $rebaseline == false ]] ||
-  fail "--automatic and --rebaseline cannot be used together"
+[[ -n $mode ]] || mode=setup
+[[ $source_changed == false || $mode == run-finish-update ]] ||
+  fail "--source-changed is internal to the update completion workflow"
 
 (( EUID != 0 )) || fail "run setup as the desktop user, not with sudo"
 [[ -x $setup && ! -L $setup ]] || fail "the repository setup script is missing or unsafe"
 [[ -f $manifest && ! -L $manifest ]] || fail "the repository manifest is missing or unsafe"
-[[ -x $terminal_launcher ]] || fail "Omarchy's floating terminal launcher is unavailable"
 [[ -x /usr/bin/jq ]] || fail "required command is missing: /usr/bin/jq"
 
 version=$(/usr/bin/jq -er '.version' "$manifest") || fail "the repository manifest has no valid version"
 [[ $version =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]] || fail "the repository version is unsafe"
 
+finish_update() {
+  local installed_version state
+
+  if [[ ! -x $helper ]]; then
+    echo "EscaLock system setup has not been completed yet."
+    exec "$setup" --enable
+  fi
+  installed_version=$($helper version) || fail "the installed helper could not report its version"
+  state=$($helper status) || fail "the installed helper could not verify Secure Mode state"
+
+  if [[ $source_changed == false && $installed_version == "$version" ]]; then
+    case "$state" in
+      enabled)
+        echo "EscaLock $version is already up to date. Secure Mode is OFF."
+        return 0
+        ;;
+      disabled)
+        echo "EscaLock $version is already up to date. Secure Mode remains ON."
+        return 0
+        ;;
+    esac
+  fi
+
+  case "$state" in
+    enabled)
+      exec "$setup"
+      ;;
+    disabled)
+      [[ -x $installed_cli ]] || fail "the installed EscaLock command is missing"
+      echo "Secure Mode must be turned off to finish the update."
+      echo "Authenticate when prompted; setup will leave Secure Mode OFF."
+      "$installed_cli" off >/dev/null
+      [[ $($helper status) == enabled ]] || fail "Administrator Mode could not be restored"
+      exec "$setup"
+      ;;
+    inconsistent)
+      echo "Omarchy changed administrator permissions since EscaLock last recorded them."
+      echo "Review the detected rules before approving the new baseline."
+      exec "$setup" --rebaseline
+      ;;
+    *)
+      fail "the installed helper returned an unknown state"
+      ;;
+  esac
+}
+
+if [[ $mode == run-finish-update ]]; then
+  finish_update
+  exit 0
+fi
+
+[[ -x $terminal_launcher ]] || fail "Omarchy's floating terminal launcher is unavailable"
+
 # Automatic onboarding is only for a genuinely fresh installation. An older
 # helper needs an intentional update after Administrator Mode has been restored.
-if [[ $automatic == true && -x $helper ]]; then
+if [[ $mode == automatic && -x $helper ]]; then
   exit 0
 fi
 
 marker_created=false
 marker=
-if [[ $automatic == true ]]; then
+if [[ $mode == automatic ]]; then
   state_root=${XDG_STATE_HOME:-${HOME:-}/.local/state}
   [[ $state_root == /* && $state_root != / ]] || fail "XDG state directory is unsafe"
   state_dir="$state_root/omarchy-escalock"
@@ -81,9 +156,21 @@ if [[ $automatic == true ]]; then
   marker_created=true
 fi
 
-setup_option=--enable
-[[ $rebaseline == false ]] || setup_option=--rebaseline
-setup_command="$(printf '%q' "$setup") $setup_option"
+case "$mode" in
+  automatic | setup)
+    setup_command="$(printf '%q' "$setup") --enable"
+    ;;
+  update)
+    [[ -x $installed_cli ]] || fail "the installed EscaLock command is missing"
+    setup_command="$(printf '%q' "$installed_cli") update"
+    ;;
+  finish-update | review-changes)
+    setup_command="$(printf '%q' "${BASH_SOURCE[0]}") --run-finish-update"
+    ;;
+  *)
+    fail "unsupported onboarding mode"
+    ;;
+esac
 set +e
 "$terminal_launcher" "$setup_command"
 rc=$?

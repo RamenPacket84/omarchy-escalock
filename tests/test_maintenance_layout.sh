@@ -101,7 +101,7 @@ entry_line=${entry_line%%:*}
 }
 ready_line=$(/usr/bin/grep -nF 'rebaseline-ready' "$rebaseline" | /usr/bin/tail -n 1)
 ready_line=${ready_line%%:*}
-confirmation_line=$(/usr/bin/grep -nF "Type 'rebaseline'" "$rebaseline")
+confirmation_line=$(/usr/bin/grep -nF "Type 'approve'" "$rebaseline")
 confirmation_line=${confirmation_line%%:*}
 commit_line=$(/usr/bin/grep -nF 'timestamp=$(' "$rebaseline")
 commit_line=${commit_line%%:*}

@@ -27,6 +27,7 @@ bash -n \
   "$project_root/tests/test_maintenance_transaction.sh" \
   "$project_root/tests/test_cli.sh" \
   "$project_root/tests/test_onboarding.sh" \
+  "$project_root/tests/test_update_workflow.sh" \
   "$project_root/tests/test_setup_options.sh" \
   "$project_root/tests/test_source_origin.sh" \
   "$project_root/tests/test_widget_reload.sh"
@@ -57,6 +58,7 @@ node "$project_root/tests/test_state_model.js"
 "$project_root/tests/test_maintenance_transaction.sh"
 "$project_root/tests/test_cli.sh"
 "$project_root/tests/test_onboarding.sh"
+"$project_root/tests/test_update_workflow.sh"
 "$project_root/tests/test_setup_options.sh"
 "$project_root/tests/test_source_origin.sh"
 "$project_root/tests/test_widget_reload.sh"

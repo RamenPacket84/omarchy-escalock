@@ -78,9 +78,9 @@ old_state=$(PKEXEC_UID="$target_uid" "$helper" status) ||
 
 [[ -t 0 ]] || fail "policy rebaseline confirmation requires a terminal"
 echo "No system files have changed. Review the retained grants and restrictions above."
-read -r -p "Type 'rebaseline' to authorize exactly this policy and continue: " confirmation ||
+read -r -p "Type 'approve' to authorize exactly these administrator permissions and continue: " confirmation ||
   fail "policy rebaseline canceled"
-[[ $confirmation == rebaseline ]] || fail "policy rebaseline canceled"
+[[ $confirmation == approve ]] || fail "policy rebaseline canceled"
 
 timestamp=$(/usr/bin/date -u +%Y%m%dT%H%M%SZ)
 backup_dir="$backup_root/$timestamp-rebaseline-$$"

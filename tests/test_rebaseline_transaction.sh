@@ -131,14 +131,14 @@ expect_failure() {
 
 write_old_snapshots
 mv "$config_dir" "$test_root/config.absent"
-expect_failure run_rebaseline rebaseline
+expect_failure run_rebaseline approve
 mv "$test_root/config.absent" "$config_dir"
 snapshots_are_old
 
 cp "$work/sudo-policy.enabled.json" "$config_dir/sudo-policy.enabled.json"
 cp "$work/sudo-policy.disabled.json" "$config_dir/sudo-policy.disabled.json"
 chmod 0600 "$config_dir"/sudo-policy.*.json
-expect_failure run_rebaseline rebaseline
+expect_failure run_rebaseline approve
 write_old_snapshots
 
 expect_failure run_rebaseline cancel
@@ -146,17 +146,17 @@ snapshots_are_old
 [[ ! -e $backup_root ]]
 
 expect_failure env OMARCHY_ESCALOCK_TEST_STRUCTURAL_FAILURE=1 \
-  bash -c 'printf "rebaseline\n" | "$@"' _ "$entry" --stage "$stage" \
+  bash -c 'printf "approve\n" | "$@"' _ "$entry" --stage "$stage" \
   --user "$target_user" --commit "$(printf 'a%.0s' {1..40})" \
   --digest "$(printf 'b%.0s' {1..64})"
 snapshots_are_old
 
 /usr/bin/jq -S -n '{Policy:"changed-after-review"}' > "$live_policy"
-expect_failure run_rebaseline rebaseline
+expect_failure run_rebaseline approve
 snapshots_are_old
 
 cp "$work/sudo-policy.enabled.json" "$live_policy"
-run_rebaseline rebaseline >/dev/null
+run_rebaseline approve >/dev/null
 cmp -s "$work/sudo-policy.enabled.json" "$config_dir/sudo-policy.enabled.json"
 cmp -s "$work/sudo-policy.disabled.json" "$config_dir/sudo-policy.disabled.json"
 find "$backup_root" -mindepth 2 -maxdepth 2 -name live-policy.commit.json -print -quit |
@@ -164,7 +164,7 @@ find "$backup_root" -mindepth 2 -maxdepth 2 -name live-policy.commit.json -print
 
 write_old_snapshots
 expect_failure env OMARCHY_ESCALOCK_TEST_POSTCOMMIT_FAILURE=1 \
-  bash -c 'printf "rebaseline\n" | "$@"' _ "$entry" --stage "$stage" \
+  bash -c 'printf "approve\n" | "$@"' _ "$entry" --stage "$stage" \
   --user "$target_user" --commit "$(printf 'a%.0s' {1..40})" \
   --digest "$(printf 'b%.0s' {1..64})"
 snapshots_are_old

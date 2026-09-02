@@ -16,7 +16,7 @@ state_file="$test_root/state"
 call_log="$test_root/calls"
 
 printf '%s\n' enabled > "$state_file"
-printf '#!/bin/bash\nif [[ ${1:-} == version ]]; then echo 2.1.0; exit 0; fi\n[[ ${1:-} == status ]] || exit 2\n/bin/cat %q\n' \
+printf '#!/bin/bash\nif [[ ${1:-} == version ]]; then echo 2.2.0; exit 0; fi\n[[ ${1:-} == status ]] || exit 2\n/bin/cat %q\n' \
   "$state_file" > "$fake_helper"
 printf '#!/bin/bash\noperation=${2:-}\ncase "$operation" in\n  enable) /usr/bin/printf "enabled\\n" > %q; /usr/bin/printf "enabled\\n" ;;\n  disable) /usr/bin/printf "disabled\\n" > %q; /usr/bin/printf "disabled\\n" ;;\n  *) exit 2 ;;\nesac\n' \
   "$state_file" "$state_file" > "$fake_pkexec"
@@ -37,7 +37,7 @@ sed \
 chmod 0755 "$test_cli"
 
 [[ $($test_cli status) == off ]]
-[[ $($test_cli version) == 2.1.0 ]]
+[[ $($test_cli version) == 2.2.0 ]]
 [[ $($test_cli on) == on ]]
 [[ $($test_cli status) == on ]]
 [[ $($test_cli toggle) == off ]]
@@ -59,7 +59,7 @@ fi
 
 printf '%s\n' inconsistent > "$state_file"
 inconsistent_error=$({ "$test_cli" on >/dev/null; } 2>&1 || true)
-/usr/bin/grep -Fq 'setup.sh --rebaseline' <<< "$inconsistent_error"
+/usr/bin/grep -Fq "omarchy-escalock update" <<< "$inconsistent_error"
 if "$test_cli" uninstall >/dev/null 2>&1; then
   echo "public CLI uninstalled from an inconsistent state" >&2
   exit 1

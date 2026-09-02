@@ -35,7 +35,7 @@ Run on a current Omarchy 4 system with Administrator Mode ON:
   if its account, grant basename, migration state, or either snapshot changes
   before install.
 - Confirm rebaseline displays, confirms, and commits one digest-bound plan
-  inside a single root-owned staging operation.
+  inside a single root-owned staging operation after the user types `approve`.
 - Confirm negated sudo commands are labeled as restrictions and a later broad
   grant that overrides one causes preflight to fail.
 
@@ -55,16 +55,25 @@ Run on a current Omarchy 4 system with Administrator Mode ON:
   policy for the active local session.
 - Turn Secure Mode off and confirm authenticated sudo works again.
 - Reboot once in each state and confirm the reported state persists.
-- Test an update from the previous published release with Secure Mode off.
+- From the previous published release, run the documented one-time Omarchy
+  update and confirm **Finish update** completes the system upgrade.
+- From the current release, test both **Check for updates** and
+  `omarchy-escalock update` with no update available; confirm each is a no-op
+  that preserves Secure Mode state.
+- Test a real update with Secure Mode OFF and ON. Confirm Omarchy shows its diff
+  and confirmation, Secure Mode ON is restored to OFF only when setup is
+  required, and setup completes without a reboot.
+- Cancel Omarchy's update confirmation and simulate a failed fetch. Confirm no
+  privileged setup runs and the existing installation remains unchanged.
+- Confirm a changed checkout commit forces setup even if its manifest version
+  is unchanged.
 - On a controlled disposable test installation only, introduce harmless
   executable-scoped sudo policy drift through a separate test-owned rule. Do
   not modify a package-owned sudoers file.
-- From the previous release, confirm the changed policy reports `inconsistent`,
-  the widget/helper version mismatch prevents widget actions, and the complete
-  reviewed `setup.sh --rebaseline` command succeeds after updating the checkout.
-- With matching current versions, introduce policy drift again and confirm the
-  widget's **Review policy** button opens the read-only preflight before asking
-  for rebaseline confirmation.
+- Confirm the changed policy reports `inconsistent` and **Review changes**
+  opens the read-only preflight before asking the user to type `approve`.
+- Confirm `omarchy-escalock update` reaches that same review when no source
+  update is available, without silently accepting the policy.
 - Confirm cancellation makes no change and `--rebaseline` refuses both a fresh
   installation and an already-consistent installation.
 - Confirm rebaseline refuses Secure Mode ON, structural damage, unsafe retained

@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "andrewbacon.escalock",
   "name": "EscaLock",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "author": "Andrew Bacon",
   "license": "MIT",
   "description": "A Secure Mode switch that blocks new general administrator access until you authenticate to restore it",

@@ -137,6 +137,7 @@ omarchy-escalock status
 omarchy-escalock on
 omarchy-escalock off
 omarchy-escalock toggle
+omarchy-escalock update
 ```
 
 `status` prints `on`, `off`, or `inconsistent`.
@@ -144,6 +145,8 @@ omarchy-escalock toggle
 - `on` restricts general administrator elevation.
 - `off` authenticates and restores administrator elevation.
 - `toggle` changes only a verified state and refuses an inconsistent one.
+- `update` checks GitHub through Omarchy, shows the changes for approval, and
+  guides you through any required system setup.
 
 If the bar is unavailable, `omarchy-escalock off` is also the normal recovery
 command.
@@ -196,49 +199,49 @@ For the full threat model and implementation invariants, see
 
 ## Update
 
-Restore Administrator Mode before updating, then update both the user-owned
-checkout and the privileged components:
+Open the widget and choose **Check for updates**, or run this one command:
 
 ```bash
-omarchy-escalock off
-omarchy plugin update andrewbacon.escalock --yes
-~/.config/omarchy/plugins/andrewbacon.escalock/setup.sh
+omarchy-escalock update
 ```
 
-Setup displays the new commit, creates a new backup, and rolls back to the
-previous recovery path if the upgrade fails. The widget compares its version
-with the installed helper and disables transitions while an update is required.
+Omarchy checks GitHub and, when an update exists, shows you the changes before
+asking whether to continue. EscaLock then finishes the system update in a
+guided terminal. If Secure Mode is ON, it asks you to authenticate and turns
+Secure Mode off first. Setup displays the new commit, asks for confirmation,
+creates a new backup, and rolls back to the previous recovery path if the
+upgrade fails. No reboot is required.
+
+EscaLock does not check the network in the background or install an update
+without your approval. If the source was updated but system setup was not
+finished, the widget displays **Finish update** so you can resume safely.
+
+### One-time update from EscaLock 2.1.0 or older
+
+Older installed commands do not yet include the guided updater. Update the
+plugin once with Omarchy:
+
+```bash
+omarchy plugin update andrewbacon.escalock
+```
+
+Then click EscaLock in the bar and choose **Finish update**. Future updates can
+use **Check for updates** or `omarchy-escalock update`.
+
+### Administrator changes after an Omarchy update
 
 An Omarchy update can legitimately change the effective sudo policy. EscaLock
-then reports `inconsistent` instead of silently trusting the new policy. After
-you have reviewed a safe change, run:
+then reports `inconsistent` instead of silently trusting the new permissions.
+Choose **Review changes** in the widget. The same guided review is also opened
+by `omarchy-escalock update` when no EscaLock update is waiting.
 
-```bash
-~/.config/omarchy/plugins/andrewbacon.escalock/setup.sh --rebaseline
-```
-
-When the widget and installed helper already use the same EscaLock version, the
-widget also provides a **Review policy** button that opens this process. During
-an upgrade from an older helper, use the command directly because the widget
-disables its actions until the system components have been updated.
-
-This mode performs a read-only privileged preflight first and shows every
-retained grant and restriction. The same root-owned operation verifies that an
-existing installation is inconsistent only because its policy snapshots are
-stale. Only after those checks succeed does it ask you to type `rebaseline` to
-authorize that exact policy. It recaptures the live policy immediately before
-replacement, then backs up and replaces only the two effective-policy
-snapshots before completing the normal upgrade. It never edits or removes
-package-owned sudoers rules.
-
-If a system update has already caused `inconsistent`, update the user-owned
-plugin checkout first, then use the reviewed rebaseline path instead of
-repeating `omarchy-escalock off`:
-
-```bash
-omarchy plugin update andrewbacon.escalock --yes
-~/.config/omarchy/plugins/andrewbacon.escalock/setup.sh --rebaseline
-```
+The review performs a read-only privileged preflight first and shows every
+administrator grant and restriction that would remain. It verifies that the
+existing installation is safe and that only EscaLock's recorded permission
+snapshots are stale. Only after those checks succeed does it ask you to type
+`approve` for exactly the permissions shown. It recaptures the live policy
+immediately before replacement, backs up and replaces only EscaLock's two
+snapshots, and never edits or removes Omarchy-owned sudoers rules.
 
 ## Uninstall
 
@@ -324,8 +327,9 @@ guided terminal cannot be opened, run setup from the current plugin checkout:
 ~/.config/omarchy/plugins/andrewbacon.escalock/setup.sh --enable
 ```
 
-For an update, Administrator Mode must be ON first. If needed, run
-`omarchy-escalock off`, then follow the commands in [Update](#update).
+For an update, choose **Finish update**. The guided workflow restores
+Administrator Mode first when needed. For a normal update check, choose
+**Check for updates** or run `omarchy-escalock update`.
 
 ### The update finished but the widget still requests an update
 
@@ -349,11 +353,11 @@ the root-owned installation metadata and backups, then run the setup preflight:
 ~/.config/omarchy/plugins/andrewbacon.escalock/setup.sh --check
 ```
 
-If preflight succeeds and every listed grant and restriction is expected, use
-the widget's **Review policy** button when it is available. Otherwise, run the
-full `setup.sh --rebaseline` command in [Update](#update). Rebaselining is
-deliberately unavailable while Secure Mode is ON or when the managed grant,
-Polkit policy, helper, or complete sudoers configuration is unsafe.
+If preflight succeeds and every listed grant and restriction is expected,
+choose **Review changes** in the widget, or run `omarchy-escalock update`.
+Approval is deliberately unavailable while Secure Mode is ON or when the
+managed grant, Polkit policy, helper, or complete sudoers configuration is
+unsafe.
 
 If preflight reports that a sudo restriction is overridden later, do not
 rebaseline. That means the final effective sudo policy is broader than an

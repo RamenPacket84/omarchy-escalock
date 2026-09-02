@@ -48,14 +48,30 @@ leaves a user-triggered retry in the widget. An existing helper, including a
 version mismatch, suppresses automatic onboarding so upgrades remain
 intentional.
 
-When the widget and helper versions match and the helper reports
-`inconsistent`, the widget offers a user-triggered **Review policy** action.
-The same unprivileged launcher opens `setup.sh --rebaseline` in a terminal. It
-never starts automatically, and it cannot bypass the privileged preflight,
-explicit `rebaseline` confirmation, structural verifier, or rollback path. The
-preflight and confirmation run in the same root-owned staging operation that
-commits the snapshots. A version mismatch suppresses this action, so an upgrade
-from an older helper uses the documented setup command directly.
+The installed, root-owned CLI provides the stable `omarchy-escalock update`
+entry point, but the entire update orchestration still runs as the desktop
+user. It invokes Omarchy's interactive plugin updater without `--yes`, records
+the checkout commit before and after the operation, and then transfers control
+to the updated checkout's unprivileged onboarding launcher. Omarchy performs
+the Git fetch and fast-forward, validates the plugin, and rolls back a failed
+validation. EscaLock never runs Git through sudo and does not depend on an
+automatic plugin or system-update hook.
+
+A changed checkout commit forces setup even when the manifest version did not
+change. If Secure Mode is ON, the launcher uses the installed authenticated
+recovery command to restore Administrator Mode before setup. If the helper
+reports `inconsistent`, it enters the reviewed rebaseline path instead of
+attempting a state transition. An unchanged, healthy installation with matching
+versions is a no-op and preserves its current Secure Mode state.
+
+The widget exposes the same user-triggered lifecycle through **Check for
+updates**, **Finish update**, and **Review changes** actions. None starts
+automatically. The latter two open the checkout launcher in a terminal and
+cannot bypass setup's source validation, privileged preflight, explicit
+confirmation, structural verifier, or rollback path. The preflight and
+confirmation run in the same root-owned staging operation that commits the
+snapshots. The public approval word is `approve`; `rebaseline` remains the
+internal maintenance operation name.
 
 After a successful install or upgrade, the unprivileged setup phase restarts
 the running Omarchy shell with Omarchy's supported restart command and verifies
@@ -300,7 +316,7 @@ upgrade begins from normal `enabled` status. It is available only when the
 installed helper reports `inconsistent`, the new staged helper verifies the
 snapshot-independent Administrator-ON structure, and a fresh preflight accepts
 the current policy. The single privileged operation shows that preflight and
-its retained rules before asking the user to type `rebaseline`. Immediately
+its retained rules before asking the user to type `approve`. Immediately
 before replacement, the root entry point recaptures the normalized live policy
 and requires byte equality with the digest-bound enabled snapshot. It backs up
 both old snapshots, replaces only those files, requires the old helper to
@@ -322,12 +338,15 @@ established.
 - Explicit rebaseline starts only from snapshot drift with independently
   verified Administrator Mode ON structure; it cannot waive an unsafe policy.
 - Setup never automatically enters Administrator Mode OFF.
-- First-run onboarding only opens the interactive setup terminal; it cannot
-  bypass setup validation, confirmation, or sudo authentication.
+- First-run, update, and permission-review onboarding only open an interactive
+  terminal or dispatch the installed user-mode command; they cannot bypass
+  setup validation, confirmation, or sudo authentication.
 - Each lifecycle mutation has a root-only backup under
   `/var/backups/omarchy-escalock/`.
 - Root never changes the Omarchy plugin checkout or bar layout. Plugin enable,
   disable, update, and removal remain user-owned Omarchy operations.
+- Update checks are user-triggered, retain Omarchy's diff and confirmation, and
+  never grant Git or the checkout elevated privileges.
 - The widget refuses transitions when its expected version differs from the
   installed helper version.
 - Uninstall first restores Administrator Mode through the normal authenticated

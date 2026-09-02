@@ -138,7 +138,7 @@ run_maintenance() {
 }
 
 [[ $(run_helper status) == enabled ]]
-[[ $(run_helper version) == 2.1.0 ]]
+[[ $(run_helper version) == 2.2.0 ]]
 [[ $(run_maintenance rebaseline-ready) == enabled ]]
 if run_helper rebaseline-ready >/dev/null 2>&1; then
   echo "non-maintenance caller used the rebaseline verifier" >&2

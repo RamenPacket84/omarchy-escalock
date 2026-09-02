@@ -7,11 +7,18 @@ readonly uninstaller=/usr/local/libexec/omarchy-escalock-maint-uninstall
 readonly pkexec=/usr/bin/pkexec
 readonly sudo=/usr/bin/sudo
 readonly omarchy=/usr/share/omarchy/bin/omarchy
+readonly git=/usr/bin/git
 readonly plugin_id=andrewbacon.escalock
+readonly plugin_dir="${HOME:-}/.config/omarchy/plugins/$plugin_id"
+readonly onboarding="$plugin_dir/bin/omarchy-escalock-onboard"
 
 usage() {
-  echo "Usage: omarchy-escalock {version|status|on|off|toggle|uninstall}" >&2
+  echo "Usage: omarchy-escalock {version|status|on|off|toggle|update|uninstall}" >&2
   exit 2
+}
+
+interactive() {
+  [[ -t 0 && -t 1 ]]
 }
 
 helper_status() {
@@ -38,7 +45,7 @@ change_state() {
 
   if [[ $(helper_status) == inconsistent ]]; then
     echo "Secure Mode is inconsistent; no transition was attempted." >&2
-    echo "Review current sudo policy, then run the plugin checkout's setup.sh --rebaseline." >&2
+    echo "Review the administrator changes from the widget, or run 'omarchy-escalock update'." >&2
     return 1
   fi
 
@@ -71,6 +78,69 @@ change_state() {
   esac
 }
 
+validate_update_checkout() {
+  local git_root
+
+  [[ ${HOME:-} == /* && ${HOME:-} != / ]] || {
+    echo "Could not locate the desktop user's home directory safely." >&2
+    return 1
+  }
+  [[ -d $plugin_dir && ! -L $plugin_dir ]] || {
+    echo "The EscaLock plugin checkout is missing or unsafe: $plugin_dir" >&2
+    return 1
+  }
+  [[ -x $onboarding && -f $onboarding && ! -L $onboarding ]] || {
+    echo "The EscaLock update launcher is missing or unsafe: $onboarding" >&2
+    return 1
+  }
+  git_root=$($git -C "$plugin_dir" rev-parse --show-toplevel 2>/dev/null) || {
+    echo "The EscaLock plugin is not a Git-managed checkout." >&2
+    return 1
+  }
+  [[ $git_root == "$plugin_dir" ]] || {
+    echo "The EscaLock plugin checkout is not its Git repository root." >&2
+    return 1
+  }
+}
+
+update_escalock() {
+  local before_commit after_commit update_rc
+  local -a finish_args=(--run-finish-update)
+
+  (( EUID != 0 )) || {
+    echo "Run update as the configured desktop user, not with sudo." >&2
+    return 1
+  }
+  interactive || {
+    echo "EscaLock update requires an interactive terminal." >&2
+    return 1
+  }
+  validate_update_checkout
+  before_commit=$($git -C "$plugin_dir" rev-parse HEAD) || return 1
+
+  echo "Checking GitHub for an EscaLock update..."
+  set +e
+  "$omarchy" plugin update "$plugin_id"
+  update_rc=$?
+  set -e
+
+  validate_update_checkout
+  after_commit=$($git -C "$plugin_dir" rev-parse HEAD) || return 1
+  if (( update_rc != 0 )) && [[ $after_commit == "$before_commit" ]]; then
+    echo "The EscaLock plugin checkout was not updated." >&2
+    return "$update_rc"
+  fi
+  if (( update_rc != 0 )); then
+    echo "The checkout was updated, but Omarchy could not refresh the running widget." >&2
+    echo "Continuing with verified EscaLock system setup." >&2
+  fi
+  if [[ $after_commit != "$before_commit" ]]; then
+    finish_args+=(--source-changed)
+  fi
+
+  exec "$onboarding" "${finish_args[@]}"
+}
+
 uninstall_escalock() {
   local target_user
 
@@ -87,7 +157,7 @@ uninstall_escalock() {
       ;;
     *)
       echo "Secure Mode is inconsistent; preserving the recovery mechanism." >&2
-      echo "Review current sudo policy, then run the plugin checkout's setup.sh --rebaseline." >&2
+      echo "Review the administrator changes from the widget, or run 'omarchy-escalock update'." >&2
       return 1
       ;;
   esac
@@ -130,10 +200,13 @@ case "$1" in
       disabled) change_state enable off ;;
       *)
         echo "Secure Mode is inconsistent; refusing to guess a transition." >&2
-        echo "Review current sudo policy, then run the plugin checkout's setup.sh --rebaseline." >&2
+        echo "Review the administrator changes from the widget, or run 'omarchy-escalock update'." >&2
         exit 1
         ;;
     esac
+    ;;
+  update)
+    update_escalock
     ;;
   uninstall)
     uninstall_escalock
