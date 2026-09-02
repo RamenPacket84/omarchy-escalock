@@ -1,0 +1,117 @@
+#!/bin/bash
+
+set -euo pipefail
+umask 077
+export LC_ALL=C
+
+readonly escalock_program=omarchy-escalock-maint-rebaseline
+readonly script_path=${BASH_SOURCE[0]}
+readonly script_dir=$(cd -- "$(/usr/bin/dirname -- "$script_path")" && pwd -P)
+readonly common_module="$script_dir/omarchy-escalock-maint-common"
+readonly grant_module="$script_dir/omarchy-escalock-maint-grant"
+
+bootstrap_fail() { echo "$escalock_program: $*" >&2; exit 1; }
+
+module_is_safe() {
+  local metadata mode
+  [[ -f $1 && ! -L $1 ]] || return 1
+  metadata=$(/usr/bin/stat -c '%u:%g:%a' "$1") || return 1
+  [[ $metadata == 0:0:* ]] || return 1
+  mode=${metadata##*:}
+  (( (8#$mode & 0022) == 0 ))
+}
+
+[[ -d $script_dir && ! -L $script_dir && $(/usr/bin/stat -c '%u:%g:%a' "$script_dir") == 0:0:700 ]] ||
+  bootstrap_fail "privileged component directory is unsafe"
+module_is_safe "$common_module" || bootstrap_fail "privileged common module is unsafe"
+module_is_safe "$grant_module" || bootstrap_fail "privileged grant module is unsafe"
+# shellcheck source=bin/omarchy-escalock-maint-common
+source "$common_module"
+# shellcheck source=bin/omarchy-escalock-maint-grant
+source "$grant_module"
+
+usage() {
+  echo "Usage: $escalock_program --stage DIR --user USER --commit SHA --digest SHA256" >&2
+  exit 2
+}
+
+rollback_rebaseline() {
+  local rc=$?
+  trap - EXIT
+  if (( rc != 0 )) && [[ $snapshots_committed == false ]]; then
+    /usr/bin/rm -f -- "$config_dir/sudo-policy.enabled.json.new" \
+      "$config_dir/sudo-policy.disabled.json.new"
+    /usr/bin/install -o root -g root -m 0600 "$backup_dir/sudo-policy.enabled.json" \
+      "$config_dir/sudo-policy.enabled.json"
+    /usr/bin/install -o root -g root -m 0600 "$backup_dir/sudo-policy.disabled.json" \
+      "$config_dir/sudo-policy.disabled.json"
+    echo "Policy rebaseline failed; restored the prior snapshots from $backup_dir." >&2
+  fi
+  exit "$rc"
+}
+
+[[ $EUID == 0 ]] || bootstrap_fail "this maintenance command must run as root"
+(( $# == 8 )) || usage
+[[ $1 == --stage && $3 == --user && $5 == --commit && $7 == --digest ]] || usage
+stage=$2
+requested_user=$4
+source_commit=$6
+payload_digest=$8
+work=$stage/generated
+[[ $source_commit =~ ^[0-9a-f]{40,64}$ ]] || fail "invalid source commit"
+[[ $payload_digest =~ ^[0-9a-f]{64}$ ]] || fail "invalid payload digest"
+
+verify_preflight_plan "$work/plan" "$requested_user"
+[[ -x $stage/build/omarchy-escalock-helper && ! -L $stage/build/omarchy-escalock-helper ]] ||
+  fail "staged structural verifier is missing or unsafe"
+[[ -d $config_dir && ! -L $config_dir ]] ||
+  fail "policy rebaseline requires an existing inconsistent EscaLock installation"
+config_belongs_to_target || fail "existing EscaLock configuration is invalid"
+[[ -x $helper && ! -L $helper ]] || fail "installed helper is missing or unsafe"
+
+old_state=$(PKEXEC_UID="$target_uid" "$helper" status) ||
+  fail "installed helper could not inspect the existing state"
+[[ $old_state == inconsistent ]] ||
+  fail "policy rebaseline is only available from an inconsistent Administrator Mode state"
+[[ $(PKEXEC_UID="$target_uid" "$stage/build/omarchy-escalock-helper" rebaseline-ready) == enabled ]] ||
+  fail "installed Administrator Mode structure is not safe to rebaseline"
+
+[[ -t 0 ]] || fail "policy rebaseline confirmation requires a terminal"
+echo "No system files have changed. Review the retained grants and restrictions above."
+read -r -p "Type 'rebaseline' to authorize exactly this policy and continue: " confirmation ||
+  fail "policy rebaseline canceled"
+[[ $confirmation == rebaseline ]] || fail "policy rebaseline canceled"
+
+timestamp=$(/usr/bin/date -u +%Y%m%dT%H%M%SZ)
+backup_dir="$backup_root/$timestamp-rebaseline-$$"
+/usr/bin/install -d -o root -g root -m 0700 "$backup_dir"
+for snapshot in sudo-policy.enabled.json sudo-policy.disabled.json; do
+  [[ -f $config_dir/$snapshot && ! -L $config_dir/$snapshot ]] ||
+    fail "existing policy snapshot is missing or unsafe: $snapshot"
+  [[ $(/usr/bin/stat -c '%u:%g:%a' "$config_dir/$snapshot") == 0:0:600 ]] ||
+    fail "existing policy snapshot has unsafe metadata: $snapshot"
+  /usr/bin/cp -a -- "$config_dir/$snapshot" "$backup_dir/$snapshot"
+done
+
+# Close the preflight-to-commit window: the normalized live policy must still
+# equal the enabled snapshot whose digest was recorded in the confirmed plan.
+/usr/bin/cvtsudoers -f JSON -e -M -m "user=$target_user" "$sudoers_main" |
+  /usr/bin/jq -S . > "$backup_dir/live-policy.commit.json"
+/usr/bin/cmp -s "$backup_dir/live-policy.commit.json" "$work/sudo-policy.enabled.json" ||
+  fail "sudo policy changed after preflight; rerun setup"
+
+snapshots_committed=false
+trap rollback_rebaseline EXIT
+/usr/bin/install -o root -g root -m 0600 "$work/sudo-policy.enabled.json" \
+  "$config_dir/sudo-policy.enabled.json.new"
+/usr/bin/install -o root -g root -m 0600 "$work/sudo-policy.disabled.json" \
+  "$config_dir/sudo-policy.disabled.json.new"
+/usr/bin/mv -f -- "$config_dir/sudo-policy.enabled.json.new" \
+  "$config_dir/sudo-policy.enabled.json"
+/usr/bin/mv -f -- "$config_dir/sudo-policy.disabled.json.new" \
+  "$config_dir/sudo-policy.disabled.json"
+[[ $(PKEXEC_UID="$target_uid" "$helper" status) == enabled ]] ||
+  fail "installed helper did not accept the replacement snapshots"
+snapshots_committed=true
+trap - EXIT
+echo "Rebaselined EscaLock policy snapshots. Backup: $backup_dir"

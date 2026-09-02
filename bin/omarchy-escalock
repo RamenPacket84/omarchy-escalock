@@ -36,6 +36,12 @@ change_state() {
   local result
   local rc
 
+  if [[ $(helper_status) == inconsistent ]]; then
+    echo "Secure Mode is inconsistent; no transition was attempted." >&2
+    echo "Review current sudo policy, then run the plugin checkout's setup.sh --rebaseline." >&2
+    return 1
+  fi
+
   set +e
   result=$("$pkexec" "$helper" "$operation")
   rc=$?
@@ -81,6 +87,7 @@ uninstall_escalock() {
       ;;
     *)
       echo "Secure Mode is inconsistent; preserving the recovery mechanism." >&2
+      echo "Review current sudo policy, then run the plugin checkout's setup.sh --rebaseline." >&2
       return 1
       ;;
   esac
@@ -123,6 +130,7 @@ case "$1" in
       disabled) change_state enable off ;;
       *)
         echo "Secure Mode is inconsistent; refusing to guess a transition." >&2
+        echo "Review current sudo policy, then run the plugin checkout's setup.sh --rebaseline." >&2
         exit 1
         ;;
     esac

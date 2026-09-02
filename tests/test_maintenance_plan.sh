@@ -12,6 +12,13 @@ target_gid=$(id -g)
 probe=$test_root/plan-probe
 plan=$test_root/plan
 marker=$test_root/injection-ran
+printf '{}\n' > "$test_root/sudo-policy.enabled.json"
+printf '{"disabled":true}\n' > "$test_root/sudo-policy.disabled.json"
+chmod 0600 "$test_root"/sudo-policy.*.json
+enabled_hash=$(/usr/bin/sha256sum "$test_root/sudo-policy.enabled.json")
+enabled_hash=${enabled_hash%% *}
+disabled_hash=$(/usr/bin/sha256sum "$test_root/sudo-policy.disabled.json")
+disabled_hash=${disabled_hash%% *}
 
 {
   printf '#!/bin/bash\nset -euo pipefail\nreadonly escalock_program=plan-probe\n'
@@ -41,7 +48,9 @@ write_plan \
   "TARGET_UID=$target_uid" \
   "GRANT_MODE=dedicated" \
   "GRANT_BASENAME=00_$target_user" \
-  "FRESH_WHEEL_MIGRATION=false"
+  "FRESH_WHEEL_MIGRATION=false" \
+  "ENABLED_POLICY_SHA256=$enabled_hash" \
+  "DISABLED_POLICY_SHA256=$disabled_hash"
 "$probe" "$plan" "$target_user"
 
 write_plan \
@@ -49,7 +58,9 @@ write_plan \
   "TARGET_UID=$target_uid" \
   "GRANT_MODE=\$(touch $marker)" \
   "GRANT_BASENAME=00_$target_user" \
-  "FRESH_WHEEL_MIGRATION=false"
+  "FRESH_WHEEL_MIGRATION=false" \
+  "ENABLED_POLICY_SHA256=$enabled_hash" \
+  "DISABLED_POLICY_SHA256=$disabled_hash"
 expect_rejected
 [[ ! -e $marker ]]
 
@@ -58,7 +69,9 @@ write_plan \
   "TARGET_UID=$target_uid" \
   "GRANT_MODE=dedicated" \
   "GRANT_BASENAME=../00_$target_user" \
-  "FRESH_WHEEL_MIGRATION=false"
+  "FRESH_WHEEL_MIGRATION=false" \
+  "ENABLED_POLICY_SHA256=$enabled_hash" \
+  "DISABLED_POLICY_SHA256=$disabled_hash"
 expect_rejected
 
 write_plan \
@@ -67,7 +80,20 @@ write_plan \
   "GRANT_MODE=dedicated" \
   "GRANT_BASENAME=00_$target_user" \
   "FRESH_WHEEL_MIGRATION=false" \
+  "ENABLED_POLICY_SHA256=$enabled_hash" \
+  "DISABLED_POLICY_SHA256=$disabled_hash" \
   "EXTRA_FIELD=$marker"
+expect_rejected
+
+write_plan \
+  "TARGET_USER=$target_user" \
+  "TARGET_UID=$target_uid" \
+  "GRANT_MODE=dedicated" \
+  "GRANT_BASENAME=00_$target_user" \
+  "FRESH_WHEEL_MIGRATION=false" \
+  "ENABLED_POLICY_SHA256=$enabled_hash" \
+  "DISABLED_POLICY_SHA256=$disabled_hash"
+printf 'tampered\n' >> "$test_root/sudo-policy.enabled.json"
 expect_rejected
 
 echo "privileged preflight plan tests passed"

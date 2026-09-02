@@ -144,11 +144,17 @@ wheel_grant_is_exact() {
 }
 
 write_preflight_plan() {
-  local destination=$1
+  local destination=$1 enabled_hash disabled_hash
 
-  /usr/bin/printf 'TARGET_USER=%s\nTARGET_UID=%s\nGRANT_MODE=%s\nGRANT_BASENAME=%s\nFRESH_WHEEL_MIGRATION=%s\n' \
-    "$target_user" "$target_uid" "$grant_mode" "$grant_basename" "$fresh_wheel_migration" \
-    > "$destination"
+  enabled_hash=$(/usr/bin/sha256sum "$work/sudo-policy.enabled.json")
+  enabled_hash=${enabled_hash%% *}
+  disabled_hash=$(/usr/bin/sha256sum "$work/sudo-policy.disabled.json")
+  disabled_hash=${disabled_hash%% *}
+
+  /usr/bin/printf '%s\n' \
+    "TARGET_USER=$target_user" "TARGET_UID=$target_uid" "GRANT_MODE=$grant_mode" \
+    "GRANT_BASENAME=$grant_basename" "FRESH_WHEEL_MIGRATION=$fresh_wheel_migration" \
+    "ENABLED_POLICY_SHA256=$enabled_hash" "DISABLED_POLICY_SHA256=$disabled_hash" > "$destination"
   /usr/bin/chown root:root "$destination"
   /usr/bin/chmod 0600 "$destination"
 }
@@ -157,28 +163,46 @@ verify_preflight_plan() {
   local plan=$1 requested_user=$2
   local metadata
   local -a lines
-  local plan_user plan_uid plan_mode plan_basename plan_fresh
+  local plan_user plan_uid plan_mode plan_basename plan_fresh enabled_hash disabled_hash actual_hash
+  local snapshot snapshot_dir
 
   [[ -f $plan && ! -L $plan ]] || fail "privileged preflight plan is missing or unsafe"
   metadata=$(/usr/bin/stat -c '%u:%g:%a' "$plan")
   [[ $metadata == 0:0:600 ]] || fail "privileged preflight plan has unsafe ownership or permissions"
   mapfile -t lines < "$plan"
-  (( ${#lines[@]} == 5 )) || fail "privileged preflight plan has an unexpected format"
+  (( ${#lines[@]} == 7 )) || fail "privileged preflight plan has an unexpected format"
   [[ ${lines[0]} == TARGET_USER=* && ${lines[1]} == TARGET_UID=* &&
      ${lines[2]} == GRANT_MODE=* && ${lines[3]} == GRANT_BASENAME=* &&
-     ${lines[4]} == FRESH_WHEEL_MIGRATION=* ]] ||
+     ${lines[4]} == FRESH_WHEEL_MIGRATION=* &&
+     ${lines[5]} == ENABLED_POLICY_SHA256=* &&
+     ${lines[6]} == DISABLED_POLICY_SHA256=* ]] ||
     fail "privileged preflight plan has an unexpected format"
   plan_user=${lines[0]#TARGET_USER=}
   plan_uid=${lines[1]#TARGET_UID=}
   plan_mode=${lines[2]#GRANT_MODE=}
   plan_basename=${lines[3]#GRANT_BASENAME=}
   plan_fresh=${lines[4]#FRESH_WHEEL_MIGRATION=}
+  enabled_hash=${lines[5]#ENABLED_POLICY_SHA256=}
+  disabled_hash=${lines[6]#DISABLED_POLICY_SHA256=}
   [[ $plan_user == "$requested_user" && $plan_uid =~ ^[0-9]+$ ]] ||
     fail "privileged preflight plan identifies another account"
   [[ $plan_mode == dedicated || $plan_mode == omarchy-wheel ]] ||
     fail "privileged preflight plan has an invalid grant mode"
   [[ $plan_fresh == true || $plan_fresh == false ]] ||
     fail "privileged preflight plan has an invalid migration state"
+  [[ $enabled_hash =~ ^[0-9a-f]{64}$ && $disabled_hash =~ ^[0-9a-f]{64}$ ]] ||
+    fail "privileged preflight plan has an invalid snapshot digest"
+  snapshot_dir=${plan%/*}
+  for snapshot in sudo-policy.enabled.json sudo-policy.disabled.json; do
+    [[ -f $snapshot_dir/$snapshot && ! -L $snapshot_dir/$snapshot ]] ||
+      fail "privileged preflight snapshot is missing or unsafe: $snapshot"
+    [[ $(/usr/bin/stat -c '%u:%g:%a' "$snapshot_dir/$snapshot") == 0:0:600 ]] ||
+      fail "privileged preflight snapshot has unsafe ownership or permissions: $snapshot"
+  done
+  actual_hash=$(/usr/bin/sha256sum "$snapshot_dir/sudo-policy.enabled.json")
+  [[ ${actual_hash%% *} == "$enabled_hash" ]] || fail "enabled sudo policy changed after preflight"
+  actual_hash=$(/usr/bin/sha256sum "$snapshot_dir/sudo-policy.disabled.json")
+  [[ ${actual_hash%% *} == "$disabled_hash" ]] || fail "disabled sudo policy changed after preflight"
 
   initialize_target_account "$requested_user"
   grant_messages=false

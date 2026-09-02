@@ -2,10 +2,10 @@
   "schemaVersion": 1,
   "id": "andrewbacon.escalock",
   "name": "EscaLock",
-  "version": "2.0.7",
+  "version": "2.1.0",
   "author": "Andrew Bacon",
   "license": "MIT",
-  "description": "Secure Mode for gating subsequent sudo and Polkit administrator elevation",
+  "description": "A Secure Mode switch that blocks new general administrator access until you authenticate to restore it",
   "kinds": [
     "bar-widget"
   ],
@@ -14,7 +14,7 @@
   },
   "barWidget": {
     "displayName": "EscaLock",
-    "description": "Restrict or restore general administrator elevation for the local user",
+    "description": "Block new general administrator access until you authenticate to restore it",
     "category": "System",
     "allowMultiple": false,
     "defaultSection": "right"

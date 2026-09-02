@@ -1,0 +1,164 @@
+# shellcheck shell=bash
+
+capture_current_policy() {
+  local filter="user=$target_user"
+
+  /usr/bin/cvtsudoers -f JSON -e -M -m "$filter" "$sudoers_main" |
+    /usr/bin/jq -S . > "$work/sudo-policy.current.json"
+}
+
+derive_migrated_wheel_policy() {
+  local wheel_count
+
+  wheel_count=$(/usr/bin/jq '
+    [.User_Specs[]? | select(.User_List == [{"usergroup":"wheel"}])
+     | select(.Host_List == [{"hostname":"ALL"}]) | .Cmnd_Specs[]?
+     | select((.runasusers // []) == [{"username":"ALL"}])
+     | select((.runasgroups // []) == [{"usergroup":"ALL"}])
+     | select(.Commands == [{"command":"ALL"}])] | length
+  ' "$work/sudo-policy.current.json")
+  [[ $wheel_count == 1 ]] ||
+    fail "the effective sudo policy does not contain exactly one Omarchy wheel grant"
+  /usr/bin/jq -S --arg user "$target_user" '
+    def controlled_wheel:
+      (.User_List == [{"usergroup":"wheel"}]) and
+      (.Host_List == [{"hostname":"ALL"}]) and
+      (.Cmnd_Specs | length == 1) and
+      (.Cmnd_Specs[0].runasusers // [] == [{"username":"ALL"}]) and
+      (.Cmnd_Specs[0].runasgroups // [] == [{"usergroup":"ALL"}]) and
+      (.Cmnd_Specs[0].Commands == [{"command":"ALL"}]);
+    .User_Specs |= [.[] | if controlled_wheel then
+      (.User_List += [{"username":$user,"negated":true}]),
+      (.User_List = [{"username":$user}]) else . end]
+  ' "$work/sudo-policy.current.json" > "$work/sudo-policy.enabled.json"
+}
+
+derive_enabled_policy() {
+  if [[ $grant_mode == omarchy-wheel && $fresh_wheel_migration == true ]]; then
+    derive_migrated_wheel_policy
+  else
+    /usr/bin/cp -- "$work/sudo-policy.current.json" "$work/sudo-policy.enabled.json"
+  fi
+}
+
+validate_managed_policy() {
+  local managed_count general_count
+
+  managed_count=$(/usr/bin/jq --arg user "$target_user" --arg mode "$grant_mode" '
+    [.User_Specs[]? | select(.User_List == [{"username":$user}])
+     | select(.Host_List == [{"hostname":"ALL"}]) | .Cmnd_Specs[]?
+     | select((.runasusers // []) == [{"username":"ALL"}])
+     | select(if $mode == "omarchy-wheel" then
+         (.runasgroups // []) == [{"usergroup":"ALL"}]
+       else ((.runasgroups // []) | length) == 0 end)
+     | select(.Commands == [{"command":"ALL"}])] | length
+  ' "$work/sudo-policy.enabled.json")
+  [[ $managed_count == 1 ]] ||
+    fail "the effective sudo policy does not contain exactly one managed general grant"
+
+  general_count=$(/usr/bin/jq --arg user "$target_user" '
+    [.User_Specs[]?
+     | select(.User_List != [{"usergroup":"wheel"},{"username":$user,"negated":true}])
+     | .Cmnd_Specs[]?.Commands[]?
+     | select(.command == "ALL" and ((.negated // false) | not))] | length
+  ' "$work/sudo-policy.enabled.json")
+  [[ $general_count == 1 ]] ||
+    fail "another matching sudo rule grants ALL; refusing an incomplete Secure Mode"
+}
+
+policy_entries() {
+  /usr/bin/jq -r '
+    [.User_Specs[]?.Cmnd_Specs[]?.Commands[]?]
+    | to_entries[] | [.key, (.value.negated // false), .value.command] | @tsv
+  ' "$work/sudo-policy.enabled.json"
+}
+
+reject_overridden_restrictions() {
+  local left_index left_negated left_command left_executable
+  local right_index right_negated right_command right_executable
+  local left right
+  local entries=()
+
+  mapfile -t entries < <(policy_entries)
+  for left in "${entries[@]}"; do
+    IFS=$'\t' read -r left_index left_negated left_command <<< "$left"
+    [[ $left_negated == true ]] || continue
+    left_executable=${left_command%% *}
+    for right in "${entries[@]}"; do
+      IFS=$'\t' read -r right_index right_negated right_command <<< "$right"
+      (( right_index > left_index )) || continue
+      [[ $right_negated == false ]] || continue
+      # The one positive ALL entry is EscaLock's managed grant and disappears
+      # from the disabled snapshot; other positive ALL entries were rejected.
+      [[ $right_command != ALL ]] || continue
+      right_executable=${right_command%% *}
+      if [[ $right_command == "$left_command" ||
+            ( $right_executable == "$left_executable" &&
+              $right_command == "$right_executable" ) ]]; then
+        fail "sudo restriction '$left_command' is overridden later by '$right_command'"
+      fi
+    done
+  done
+}
+
+screen_retained_delegations() {
+  local _index negated command executable basename delegation_kind label
+
+  while IFS=$'\t' read -r _index negated command; do
+    if [[ $command == ALL ]]; then
+      [[ $negated == false ]] || printf 'Retained sudo restriction (all commands): ALL\n'
+      continue
+    fi
+    executable=${command%% *}
+    [[ $executable == /* ]] || fail "retained sudo command is not an absolute path: $command"
+    if [[ $negated == false &&
+          ( $executable == *'*'* || $executable == *'?'* || $executable == *'['* ) ]]; then
+      fail "retained sudo command uses a wildcard executable: $command"
+    fi
+    basename=${executable##*/}
+    if [[ $negated == false ]]; then
+      case "$basename" in
+        sh|bash|dash|zsh|fish|env|python*|perl*|ruby*|node*|vi|vim|nvim|less|more|man|\
+        sudo|sudoedit|su|doas|tee|cp|mv|install|chmod|chown|mount|nsenter|unshare|\
+        docker|podman|pacman|make|gcc|cc|clang|gdb|find|tar|rsync)
+          fail "retained sudo command is general-purpose or shell-escapable: $command" ;;
+      esac
+      label=delegation
+    else
+      label=restriction
+    fi
+    if [[ $command == "$executable" ]]; then delegation_kind="any arguments"
+    elif [[ $command == *'*'* || $command == *'?'* || $command == *'['* ]]; then
+      delegation_kind="argument pattern"
+    else delegation_kind="exact arguments"
+    fi
+    printf 'Retained sudo %s (%s): %s\n' "$label" "$delegation_kind" "$command"
+  done < <(policy_entries)
+}
+
+derive_disabled_policy() {
+  /usr/bin/jq -S --arg user "$target_user" --arg mode "$grant_mode" '
+    def controlled:
+      ((.runasusers // []) == [{"username":"ALL"}]) and
+      (if $mode == "omarchy-wheel" then
+         (.runasgroups // []) == [{"usergroup":"ALL"}]
+       else ((.runasgroups // []) | length) == 0 end) and
+      (.Commands == [{"command":"ALL"}]);
+    .User_Specs |= map(if (.User_List == [{"username":$user}]) and
+      (.Host_List == [{"hostname":"ALL"}]) then
+      .Cmnd_Specs |= map(select(controlled | not)) else . end)
+    | .User_Specs |= map(select((.Cmnd_Specs | length) > 0))
+  ' "$work/sudo-policy.enabled.json" > "$work/sudo-policy.disabled.json"
+}
+
+create_policy_snapshots() {
+  capture_current_policy
+  derive_enabled_policy
+  validate_managed_policy
+  reject_overridden_restrictions
+  screen_retained_delegations
+  derive_disabled_policy
+  /usr/bin/rm -f -- "$work/sudo-policy.current.json"
+  /usr/bin/chown root:root "$work"/sudo-policy.*.json
+  /usr/bin/chmod 0600 "$work"/sudo-policy.*.json
+}

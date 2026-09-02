@@ -10,9 +10,11 @@ bash -n \
   "$project_root/setup.sh" \
   "$project_root/bin/omarchy-escalock-maint-common" \
   "$project_root/bin/omarchy-escalock-maint-grant" \
+  "$project_root/bin/omarchy-escalock-maint-policy" \
   "$project_root/bin/omarchy-escalock-maint-transaction" \
   "$project_root/bin/omarchy-escalock-maint-preflight" \
   "$project_root/bin/omarchy-escalock-maint-install" \
+  "$project_root/bin/omarchy-escalock-maint-rebaseline" \
   "$project_root/bin/omarchy-escalock-maint-uninstall" \
   "$project_root/bin/omarchy-escalock" \
   "$project_root/bin/omarchy-escalock-onboard" \
@@ -20,6 +22,8 @@ bash -n \
   "$project_root/tests/test_grant_discovery.sh" \
   "$project_root/tests/test_maintenance_layout.sh" \
   "$project_root/tests/test_maintenance_plan.sh" \
+  "$project_root/tests/test_policy_snapshot.sh" \
+  "$project_root/tests/test_rebaseline_transaction.sh" \
   "$project_root/tests/test_maintenance_transaction.sh" \
   "$project_root/tests/test_cli.sh" \
   "$project_root/tests/test_onboarding.sh" \
@@ -48,6 +52,8 @@ node "$project_root/tests/test_state_model.js"
 "$project_root/tests/test_grant_discovery.sh"
 "$project_root/tests/test_maintenance_layout.sh"
 "$project_root/tests/test_maintenance_plan.sh"
+"$project_root/tests/test_policy_snapshot.sh"
+"$project_root/tests/test_rebaseline_transaction.sh"
 "$project_root/tests/test_maintenance_transaction.sh"
 "$project_root/tests/test_cli.sh"
 "$project_root/tests/test_onboarding.sh"

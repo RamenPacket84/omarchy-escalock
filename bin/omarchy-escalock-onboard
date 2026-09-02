@@ -11,6 +11,7 @@ readonly helper=/usr/local/libexec/omarchy-escalock-helper
 readonly terminal_launcher=/usr/bin/omarchy-launch-floating-terminal-with-presentation
 
 automatic=false
+rebaseline=false
 
 fail() {
   echo "omarchy-escalock-onboard: $*" >&2
@@ -18,13 +19,17 @@ fail() {
 }
 
 usage() {
-  echo "Usage: omarchy-escalock-onboard [--automatic]"
+  echo "Usage: omarchy-escalock-onboard [--automatic|--rebaseline]"
 }
 
 while (( $# > 0 )); do
   case "$1" in
     --automatic)
       automatic=true
+      shift
+      ;;
+    --rebaseline)
+      rebaseline=true
       shift
       ;;
     -h | --help)
@@ -37,6 +42,9 @@ while (( $# > 0 )); do
       ;;
   esac
 done
+
+[[ $automatic == false || $rebaseline == false ]] ||
+  fail "--automatic and --rebaseline cannot be used together"
 
 (( EUID != 0 )) || fail "run setup as the desktop user, not with sudo"
 [[ -x $setup && ! -L $setup ]] || fail "the repository setup script is missing or unsafe"
@@ -73,7 +81,9 @@ if [[ $automatic == true ]]; then
   marker_created=true
 fi
 
-setup_command="$(printf '%q' "$setup") --enable"
+setup_option=--enable
+[[ $rebaseline == false ]] || setup_option=--rebaseline
+setup_command="$(printf '%q' "$setup") $setup_option"
 set +e
 "$terminal_launcher" "$setup_command"
 rc=$?

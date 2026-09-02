@@ -48,12 +48,12 @@ reset_case() {
   printf 'true\n' > "$enabled_state"
   printf 'success\n' > "$restart_state"
   printf '2.0.6\n' > "$loaded_version"
-  printf '2.0.7\n' > "$desired_version"
+  printf '2.1.0\n' > "$desired_version"
 }
 
 reset_case
-output=$(omarchy_escalock_refresh_widget 2.0.7 andrewbacon.escalock 2>&1)
-grep -Fq 'EscaLock bar widget restarted at version 2.0.7.' <<< "$output"
+output=$(omarchy_escalock_refresh_widget 2.1.0 andrewbacon.escalock 2>&1)
+grep -Fq 'EscaLock bar widget restarted at version 2.1.0.' <<< "$output"
 grep -Fxq 'restart shell' "$call_log"
 grep -Fxq 'shell andrewbacon.escalock version' "$call_log"
 if grep -Fq 'rescanPlugins' "$call_log"; then
@@ -63,7 +63,7 @@ fi
 
 reset_case
 printf 'false\n' > "$enabled_state"
-output=$(omarchy_escalock_refresh_widget 2.0.7 andrewbacon.escalock 2>&1)
+output=$(omarchy_escalock_refresh_widget 2.1.0 andrewbacon.escalock 2>&1)
 grep -Fq 'disabled EscaLock widget will load the update' <<< "$output"
 if grep -Fq 'restart shell' "$call_log"; then
   echo "disabled widget incorrectly restarted the shell" >&2
@@ -72,7 +72,7 @@ fi
 
 reset_case
 printf 'locked\n' > "$lock_state"
-output=$(omarchy_escalock_refresh_widget 2.0.7 andrewbacon.escalock 2>&1)
+output=$(omarchy_escalock_refresh_widget 2.1.0 andrewbacon.escalock 2>&1)
 grep -Fq "After unlocking, run 'omarchy restart shell'" <<< "$output"
 grep -Fxq 'shell shell ping' "$call_log"
 if grep -Fq 'restart shell' "$call_log"; then
@@ -82,7 +82,7 @@ fi
 
 reset_case
 printf 'unknown\n' > "$lock_state"
-output=$(omarchy_escalock_refresh_widget 2.0.7 andrewbacon.escalock 2>&1)
+output=$(omarchy_escalock_refresh_widget 2.1.0 andrewbacon.escalock 2>&1)
 grep -Fq 'session lock state is unknown' <<< "$output"
 if grep -Fq 'restart shell' "$call_log"; then
   echo "unknown lock state incorrectly restarted the shell" >&2
@@ -91,7 +91,7 @@ fi
 
 reset_case
 printf 'stopped\n' > "$shell_state"
-output=$(omarchy_escalock_refresh_widget 2.0.7 andrewbacon.escalock 2>&1)
+output=$(omarchy_escalock_refresh_widget 2.1.0 andrewbacon.escalock 2>&1)
 grep -Fq 'will load the update when the Omarchy shell next starts' <<< "$output"
 if grep -Fq 'restart shell' "$call_log"; then
   echo "stopped shell incorrectly received a restart request" >&2
@@ -100,21 +100,21 @@ fi
 
 reset_case
 printf 'failure\n' > "$restart_state"
-output=$(omarchy_escalock_refresh_widget 2.0.7 andrewbacon.escalock 2>&1)
+output=$(omarchy_escalock_refresh_widget 2.1.0 andrewbacon.escalock 2>&1)
 grep -Fq 'bar widget could not be refreshed' <<< "$output"
 grep -Fq 'omarchy restart shell' <<< "$output"
 grep -Fxq 'restart shell' "$call_log"
 
 reset_case
 printf 'unavailable\n' > "$desired_version"
-output=$(omarchy_escalock_refresh_widget 2.0.7 andrewbacon.escalock 2>&1)
+output=$(omarchy_escalock_refresh_widget 2.1.0 andrewbacon.escalock 2>&1)
 grep -Fq 'bar widget could not be refreshed' <<< "$output"
 grep -Fxq 'restart shell' "$call_log"
 
 reset_case
 printf 'unavailable\n' > "$enabled_state"
-output=$(omarchy_escalock_refresh_widget 2.0.7 andrewbacon.escalock 2>&1)
-grep -Fq 'EscaLock bar widget restarted at version 2.0.7.' <<< "$output"
+output=$(omarchy_escalock_refresh_widget 2.1.0 andrewbacon.escalock 2>&1)
+grep -Fq 'EscaLock bar widget restarted at version 2.1.0.' <<< "$output"
 grep -Fxq 'restart shell' "$call_log"
 
 grep -Fq 'function version(): string { return root.expectedSystemVersion }' \

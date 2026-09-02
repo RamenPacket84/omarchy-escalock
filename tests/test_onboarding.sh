@@ -46,6 +46,15 @@ export XDG_STATE_HOME="$test_root/state"
 "$checkout/bin/omarchy-escalock-onboard"
 [[ $(wc -l < "$setup_log") == 2 ]]
 
+"$checkout/bin/omarchy-escalock-onboard" --rebaseline
+[[ $(wc -l < "$setup_log") == 3 ]]
+[[ $(sed -n '3p' "$setup_log") == --rebaseline ]]
+
+if "$checkout/bin/omarchy-escalock-onboard" --automatic --rebaseline >/dev/null 2>&1; then
+  echo "onboarding launcher accepted conflicting modes" >&2
+  exit 1
+fi
+
 cat > "$fake_helper" <<'EOF'
 #!/bin/bash
 [[ ${1:-} == version ]] || exit 2
@@ -55,7 +64,7 @@ chmod 0755 "$fake_helper"
 
 second_state="$test_root/second-state"
 XDG_STATE_HOME="$second_state" "$checkout/bin/omarchy-escalock-onboard" --automatic
-[[ $(wc -l < "$setup_log") == 2 ]]
+[[ $(wc -l < "$setup_log") == 3 ]]
 
 if "$checkout/bin/omarchy-escalock-onboard" --unknown >/dev/null 2>&1; then
   echo "onboarding launcher accepted an unknown option" >&2

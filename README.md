@@ -1,8 +1,10 @@
 # EscaLock for Omarchy
 
-EscaLock is a Secure Mode bar widget for Omarchy 4. It lets one local desktop
-user temporarily give up general administrator elevation, clearly displays the
-real system state, and provides an authenticated way to restore access.
+EscaLock adds a simple Secure Mode switch to the Omarchy bar. Turn it on to
+block new general-purpose uses of `sudo` and similar administrator actions,
+helping limit what someone—or an unwanted program—can change if they gain
+access to your logged-in session. When you need administrator access again,
+authenticate with your password and turn Secure Mode off.
 
 > **Security notice:** EscaLock is an independent project and has not undergone
 > a professional security audit. I use it on my own systems, but it modifies
@@ -85,15 +87,15 @@ checkout or enter another command.
 
 The guided setup:
 
-1. verifies Omarchy, the GitHub checkout, manifest, build, sudo policy, and
-   Polkit rule ordering;
-2. shows the exact version, Git commit, target user, and retained sudo
-   delegations;
+1. verifies Omarchy, the GitHub checkout, manifest, and build;
+2. shows the exact version, Git commit, and target user;
 3. asks you to type `install` and authenticate with sudo;
-4. creates a root-only recovery backup under
+4. validates the sudo policy and Polkit rule ordering and reports every
+   retained sudo grant or restriction before changing a system file;
+5. creates a root-only recovery backup under
    `/var/backups/omarchy-escalock/`;
-5. installs and verifies the system components; and
-6. leaves the enabled widget ready in Secure Mode OFF.
+6. installs and verifies the system components; and
+7. leaves the enabled widget ready in Secure Mode OFF.
 
 Administrator Mode remains ON after installation. Setup never performs the
 first Secure Mode transition automatically. Keep the backup path printed at
@@ -110,8 +112,10 @@ system files:
 ```
 
 The preflight prints every sudo delegation that would remain usable in Secure
-Mode and labels its arguments as exact, patterned, or unrestricted. Review
-that list as part of deciding whether Secure Mode meets your needs.
+Mode, prints sudo restrictions separately, and labels arguments as exact,
+patterned, or unrestricted. It rejects a restriction that a later sudoers
+entry overrides. Review that list as part of deciding whether Secure Mode
+meets your needs.
 
 ## Use the widget
 
@@ -204,6 +208,37 @@ omarchy plugin update andrewbacon.escalock --yes
 Setup displays the new commit, creates a new backup, and rolls back to the
 previous recovery path if the upgrade fails. The widget compares its version
 with the installed helper and disables transitions while an update is required.
+
+An Omarchy update can legitimately change the effective sudo policy. EscaLock
+then reports `inconsistent` instead of silently trusting the new policy. After
+you have reviewed a safe change, run:
+
+```bash
+~/.config/omarchy/plugins/andrewbacon.escalock/setup.sh --rebaseline
+```
+
+When the widget and installed helper already use the same EscaLock version, the
+widget also provides a **Review policy** button that opens this process. During
+an upgrade from an older helper, use the command directly because the widget
+disables its actions until the system components have been updated.
+
+This mode performs a read-only privileged preflight first and shows every
+retained grant and restriction. The same root-owned operation verifies that an
+existing installation is inconsistent only because its policy snapshots are
+stale. Only after those checks succeed does it ask you to type `rebaseline` to
+authorize that exact policy. It recaptures the live policy immediately before
+replacement, then backs up and replaces only the two effective-policy
+snapshots before completing the normal upgrade. It never edits or removes
+package-owned sudoers rules.
+
+If a system update has already caused `inconsistent`, update the user-owned
+plugin checkout first, then use the reviewed rebaseline path instead of
+repeating `omarchy-escalock off`:
+
+```bash
+omarchy plugin update andrewbacon.escalock --yes
+~/.config/omarchy/plugins/andrewbacon.escalock/setup.sh --rebaseline
+```
 
 ## Uninstall
 
@@ -314,6 +349,18 @@ the root-owned installation metadata and backups, then run the setup preflight:
 ~/.config/omarchy/plugins/andrewbacon.escalock/setup.sh --check
 ```
 
+If preflight succeeds and every listed grant and restriction is expected, use
+the widget's **Review policy** button when it is available. Otherwise, run the
+full `setup.sh --rebaseline` command in [Update](#update). Rebaselining is
+deliberately unavailable while Secure Mode is ON or when the managed grant,
+Polkit policy, helper, or complete sudoers configuration is unsafe.
+
+If preflight reports that a sudo restriction is overridden later, do not
+rebaseline. That means the final effective sudo policy is broader than an
+earlier restriction implies. Resolve the conflicting system sudoers entries
+through their owner or a trusted Omarchy update, then rerun `--check`.
+EscaLock will not modify those system-owned rules for you.
+
 If the normal recovery command no longer works, use the emergency procedure
 above.
 
@@ -339,6 +386,8 @@ mistaken for the published installation payload:
 make clean check
 ./setup.sh --development --check
 ./setup.sh --development --enable
+./setup.sh --development --rebaseline
+make clean
 ```
 
 Production setup builds the exact local Git `HEAD` after rejecting tracked or

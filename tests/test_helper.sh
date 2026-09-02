@@ -132,8 +132,26 @@ run_mutation() {
     OMARCHY_ESCALOCK_TEST_PKEXEC=1 "$test_helper" "$@"
 }
 
+run_maintenance() {
+  OMARCHY_ESCALOCK_TEST_ROOT="$test_root" \
+    OMARCHY_ESCALOCK_TEST_MAINTENANCE=1 "$test_helper" "$@"
+}
+
 [[ $(run_helper status) == enabled ]]
-[[ $(run_helper version) == 2.0.7 ]]
+[[ $(run_helper version) == 2.1.0 ]]
+[[ $(run_maintenance rebaseline-ready) == enabled ]]
+if run_helper rebaseline-ready >/dev/null 2>&1; then
+  echo "non-maintenance caller used the rebaseline verifier" >&2
+  exit 1
+fi
+
+cp "$config_dir/sudo-policy.enabled.json" "$test_root/enabled.snapshot"
+printf ' \n' >> "$config_dir/sudo-policy.enabled.json"
+[[ $(run_helper status) == inconsistent ]]
+[[ $(run_maintenance rebaseline-ready) == enabled ]]
+mv "$test_root/enabled.snapshot" "$config_dir/sudo-policy.enabled.json"
+chmod 0600 "$config_dir/sudo-policy.enabled.json"
+[[ $(run_helper status) == enabled ]]
 
 printf 'TARGET_USER=%s\nTARGET_UID=+%s\n' "$target_user" "$target_uid" > "$config_dir/config"
 [[ $(run_helper status; true) == inconsistent ]]
@@ -186,6 +204,10 @@ cmp -s "$rule_file" "$config_dir/00-00-omarchy-escalock-on.rules.template"
 
 mv "$grant" "$grant.missing"
 [[ $(run_helper status) == inconsistent ]]
+if run_maintenance rebaseline-ready >/dev/null 2>&1; then
+  echo "structural verifier accepted a missing managed grant" >&2
+  exit 1
+fi
 if run_mutation disable >/dev/null 2>&1; then
   echo "helper disabled from an inconsistent state" >&2
   exit 1

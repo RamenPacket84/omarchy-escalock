@@ -37,8 +37,9 @@ readonly common_module="$script_dir/omarchy-escalock-maint-common"
 readonly grant_module="$script_dir/omarchy-escalock-maint-grant"
 readonly transaction_module="$script_dir/omarchy-escalock-maint-transaction"
 readonly preflight="$script_dir/omarchy-escalock-maint-preflight"
+readonly rebaseline="$script_dir/omarchy-escalock-maint-rebaseline"
 directory_is_safe "$script_dir" || bootstrap_fail "privileged component directory is unsafe"
-for module in "$common_module" "$grant_module" "$transaction_module" "$preflight"; do
+for module in "$common_module" "$grant_module" "$transaction_module" "$preflight" "$rebaseline"; do
   module_is_safe "$module" || bootstrap_fail "privileged component is unsafe: $module"
 done
 # shellcheck source=bin/omarchy-escalock-maint-common
@@ -49,7 +50,7 @@ source "$grant_module"
 source "$transaction_module"
 
 usage() {
-  echo "Usage: $escalock_program --stage DIR --user USER --commit SHA --digest SHA256" >&2
+  echo "Usage: $escalock_program --stage DIR --user USER --commit SHA --digest SHA256 [--rebaseline]" >&2
   exit 2
 }
 
@@ -114,25 +115,38 @@ install_runtime() {
 }
 
 [[ $EUID == 0 ]] || bootstrap_fail "this maintenance command must run as root"
-(( $# == 8 )) || usage
+(( $# == 8 || $# == 9 )) || usage
 [[ $1 == --stage && $3 == --user && $5 == --commit && $7 == --digest ]] || usage
+[[ $# == 8 || ${9:-} == --rebaseline ]] || usage
 stage=$2
 requested_user=$4
 source_commit=$6
 payload_digest=$8
 work=$stage/generated
+rebaseline_requested=false
+[[ $# == 8 ]] || rebaseline_requested=true
 
 "$preflight" prepare --stage "$stage" --user "$requested_user" \
   --commit "$source_commit" --digest "$payload_digest"
 verify_preflight_plan "$work/plan" "$requested_user"
+
+if [[ $rebaseline_requested == true ]]; then
+  "$rebaseline" --stage "$stage" --user "$requested_user" \
+    --commit "$source_commit" --digest "$payload_digest"
+fi
 
 if [[ -e $config_dir ]]; then
   [[ -d $config_dir && ! -L $config_dir ]] || fail "existing configuration path is unsafe"
   config_belongs_to_target || fail "existing EscaLock configuration belongs to another account or is invalid"
   [[ -x $helper ]] || fail "existing helper is missing"
   current_state=$(PKEXEC_UID="$target_uid" "$helper" status) || fail "existing helper could not verify state"
+  if [[ $current_state == inconsistent ]]; then
+    fail "policy snapshots are inconsistent; review the policy and rerun setup with --rebaseline"
+  fi
   [[ $current_state == enabled ]] || fail "Administrator Mode must be ON before setup or upgrade"
 else
+  [[ $rebaseline_requested == false ]] ||
+    fail "policy rebaseline requires an existing inconsistent EscaLock installation"
   for path in "${system_paths[@]}"; do
     [[ ! -e $path && ! -L $path ]] || fail "unexpected existing EscaLock system file: $path"
   done

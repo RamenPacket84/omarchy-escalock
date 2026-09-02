@@ -48,6 +48,15 @@ leaves a user-triggered retry in the widget. An existing helper, including a
 version mismatch, suppresses automatic onboarding so upgrades remain
 intentional.
 
+When the widget and helper versions match and the helper reports
+`inconsistent`, the widget offers a user-triggered **Review policy** action.
+The same unprivileged launcher opens `setup.sh --rebaseline` in a terminal. It
+never starts automatically, and it cannot bypass the privileged preflight,
+explicit `rebaseline` confirmation, structural verifier, or rollback path. The
+preflight and confirmation run in the same root-owned staging operation that
+commits the snapshots. A version mismatch suppresses this action, so an upgrade
+from an older helper uses the documented setup command directly.
+
 After a successful install or upgrade, the unprivileged setup phase restarts
 the running Omarchy shell with Omarchy's supported restart command and verifies
 the widget's compiled version through a read-only IPC method. It restarts only
@@ -66,9 +75,11 @@ build/omarchy-escalock-helper
 bin/omarchy-escalock
 bin/omarchy-escalock-maint-common
 bin/omarchy-escalock-maint-grant
+bin/omarchy-escalock-maint-policy
 bin/omarchy-escalock-maint-transaction
 bin/omarchy-escalock-maint-preflight
 bin/omarchy-escalock-maint-install
+bin/omarchy-escalock-maint-rebaseline
 bin/omarchy-escalock-maint-uninstall
 manifest.json
 polkit/00-00-omarchy-escalock-on.rules.in
@@ -79,9 +90,9 @@ polkit/com.github.andrewbacon.omarchy-escalock.policy
 The sudo handoff copies this archive to a newly created root-owned mode-0700
 directory, recomputes its SHA-256, and requires the exact ordered member list
 and regular-file type before extraction. The staged tree is root-owned before
-the fixed `check` or `install` entry point runs. The bootstrap uses an explicit
-operation `case`; it never derives an executable path from user input. No
-privileged code resolves a path below the target user's home, so checkout
+the fixed `check`, `install`, or `rebaseline` branch runs. The bootstrap uses an
+explicit operation `case`; it never derives an executable path from user input.
+No privileged code resolves a path below the target user's home, so checkout
 symlinks and same-user replacement after the handoff cannot redirect root file
 operations.
 
@@ -94,8 +105,8 @@ commit and handoff digest for audit and recovery.
 
 `/usr/local/libexec/omarchy-escalock-helper` is a compiled, root-owned setuid
 executable. Setuid is used only so the configured user can inspect protected
-state without repeated authentication. It accepts four fixed operations:
-`version`, `status`, `enable`, and `disable`.
+state without repeated authentication. It accepts five fixed operations:
+`version`, `status`, `rebaseline-ready`, `enable`, and `disable`.
 
 `version` reads no configuration. `status` requires either the configured real
 UID or root invoked by `pkexec` with the matching `PKEXEC_UID`. A mutation
@@ -113,6 +124,12 @@ command, environment-selected executable, policy, or shell fragment. Child
 validators use fixed absolute executables with a cleared environment. The
 production binary is checked for test-only hooks before installation.
 
+`rebaseline-ready` is read-only and available only to a real/effective root
+maintenance process that identifies the configured user. It verifies the
+complete Administrator-ON structure while deliberately excluding only the two
+effective-policy snapshots. This gives rebaseline a narrow independent check;
+normal `status` remains fail-closed and never ignores snapshot drift.
+
 Privileged lifecycle maintenance is intentionally divided into bounded
 components:
 
@@ -120,21 +137,25 @@ components:
 | --- | --- | --- |
 | `omarchy-escalock-maint-preflight` | Root-owned staging only | Read-only account, payload, sudo, grant, and Polkit validation; creates a root-owned plan and policy snapshots inside staging |
 | `omarchy-escalock-maint-install` | Root-owned staging only | Revalidates the plan, backs up the current installation, installs or upgrades fixed paths, and owns install rollback |
+| `omarchy-escalock-maint-rebaseline` | Root-owned staging only | Replaces only stale policy snapshots after an explicit review, independent structural verification, live-policy recapture, and rollback backup |
 | `omarchy-escalock-maint-uninstall` | Installed root-owned, not setuid | Verifies Administrator Mode and protected templates, backs up fixed paths, removes them, and owns uninstall rollback |
-| `maint-common`, `maint-grant`, and `maint-transaction` | Root-owned modules | Account/config parsing, sudo-grant discovery, and fixed-path backup/restore primitives used only by the applicable entry point |
+| `maint-common`, `maint-grant`, `maint-policy`, and `maint-transaction` | Root-owned modules | Account/config parsing, sudo-grant discovery, effective-policy screening, and fixed-path backup/restore primitives used only by the applicable entry point |
 
-The plan is parsed as five fixed data lines; it is never evaluated or sourced
-as shell code. The installer repeats grant discovery after preflight and
-requires the account, UID, grant mode, basename, and migration state to remain
-identical before changing a system path.
+The plan is parsed as seven fixed data lines; it is never evaluated or sourced
+as shell code. In addition to account and grant data, it binds both generated
+policy snapshots by SHA-256. The installer repeats grant discovery after
+preflight and requires the account, UID, grant mode, basename, migration state,
+and snapshot digests to remain identical before changing a system path. For
+rebaseline, this same plan remains inside one root-owned staging directory
+while the user reviews it and types the exact confirmation word.
 
-Setup reaches preflight or install only through its verified root staging
-directory. The installed CLI reaches the fixed uninstall executable through
-sudo only after it has restored and verified Administrator Mode. These tools
-operate on fixed system roots and one strictly validated sudoers basename.
-Installation and removal create root-only backups and use operation-local exit
-traps to restore the prior recovery path after a partial failure. Upgrading
-from 2.0.3 removes the former multi-operation
+Setup reaches preflight, install, or rebaseline only through its verified root
+staging directory. The installed CLI reaches the fixed uninstall executable
+through sudo only after it has restored and verified Administrator Mode. These
+tools operate on fixed system roots and one strictly validated sudoers basename.
+Installation, rebaseline, and removal create root-only backups and use
+operation-local exit traps to restore the prior recovery path after a partial
+failure. Upgrading from 2.0.3 removes the former multi-operation
 `/usr/local/libexec/omarchy-escalock-maintain` executable transactionally.
 
 ## Polkit policy and precedence
@@ -227,7 +248,17 @@ backend in `/etc/sudo.conf`, and converts the policy matching the target user
 to normalized JSON with `cvtsudoers` and `jq`. The enabled snapshot must contain
 exactly one effective general `ALL` command. Setup derives the disabled
 snapshot by removing that controlled command specification. Every other
-matching command is enumerated and screened as a retained delegation.
+matching command is enumerated as a retained grant or restriction. Only
+positive grants are screened for general-purpose or shell-escapable executables.
+
+Command entries retain their `cvtsudoers` order and negation flag. Negative
+commands are reported as restrictions and are never mistaken for positive
+delegations during executable screening. Preflight rejects an earlier negative
+command when a later positive command grants the same command or unrestricted
+use of the same executable. This catches configurations in which a later
+package-owned compatibility rule silently cancels an earlier hardening rule.
+EscaLock does not edit or delete either rule; the system policy must be made
+unambiguous before setup or rebaseline can proceed.
 
 Both JSON snapshots are root-owned mode 0600. The helper regenerates the live
 matching policy with the same fixed tools and requires byte equality after
@@ -264,6 +295,18 @@ Internal helper state `disabled` means Administrator Mode OFF and requires:
 Everything else is `inconsistent`. The user interface deliberately maps
 `enabled` to **Secure Mode OFF** and `disabled` to **Secure Mode ON**.
 
+An explicit `setup.sh --rebaseline` is the sole exception to the rule that an
+upgrade begins from normal `enabled` status. It is available only when the
+installed helper reports `inconsistent`, the new staged helper verifies the
+snapshot-independent Administrator-ON structure, and a fresh preflight accepts
+the current policy. The single privileged operation shows that preflight and
+its retained rules before asking the user to type `rebaseline`. Immediately
+before replacement, the root entry point recaptures the normalized live policy
+and requires byte equality with the digest-bound enabled snapshot. It backs up
+both old snapshots, replaces only those files, requires the old helper to
+report `enabled`, and rolls both back on failure. The ordinary transactional
+upgrade then runs.
+
 Transitions hold an exclusive root-owned lock, use atomic rule writes and grant
 renames with directory fsync, validate sudoers, probe Polkit activation, and
 verify the complete final state. Disable installs and observes the deny rule
@@ -274,7 +317,10 @@ established.
 
 ## Recovery and lifecycle invariants
 
-- Setup, upgrade, and uninstall start only from verified Administrator Mode ON.
+- Normal setup, upgrade, and uninstall start only from verified Administrator
+  Mode ON.
+- Explicit rebaseline starts only from snapshot drift with independently
+  verified Administrator Mode ON structure; it cannot waive an unsafe policy.
 - Setup never automatically enters Administrator Mode OFF.
 - First-run onboarding only opens the interactive setup terminal; it cannot
   bypass setup validation, confirmation, or sudo authentication.

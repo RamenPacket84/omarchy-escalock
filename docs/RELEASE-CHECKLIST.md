@@ -17,6 +17,8 @@ repository.
   analysis budget enforced by `tests/test_maintenance_layout.sh`.
 - Confirm the unprivileged and root-side payload lists are identical and
   contain no wildcard members.
+- After testing, run `make clean` and confirm the ignored build directory and
+  obsolete pre-rename binaries are absent.
 
 ## Privileged preflight
 
@@ -27,10 +29,15 @@ Run on a current Omarchy 4 system with Administrator Mode ON:
 ```
 
 - Confirm the detected sudo grant is the expected file.
-- Review every retained command-specific sudo delegation.
+- Review every retained command-specific sudo grant and restriction.
 - Confirm the preflight makes no persistent system changes.
 - Confirm the generated preflight plan is root-owned, mode 0600, and rejected
-  if its account, grant basename, or migration state changes before install.
+  if its account, grant basename, migration state, or either snapshot changes
+  before install.
+- Confirm rebaseline displays, confirms, and commits one digest-bound plan
+  inside a single root-owned staging operation.
+- Confirm negated sudo commands are labeled as restrictions and a later broad
+  grant that overrides one causes preflight to fail.
 
 ## Live lifecycle test
 
@@ -49,6 +56,21 @@ Run on a current Omarchy 4 system with Administrator Mode ON:
 - Turn Secure Mode off and confirm authenticated sudo works again.
 - Reboot once in each state and confirm the reported state persists.
 - Test an update from the previous published release with Secure Mode off.
+- On a controlled disposable test installation only, introduce harmless
+  executable-scoped sudo policy drift through a separate test-owned rule. Do
+  not modify a package-owned sudoers file.
+- From the previous release, confirm the changed policy reports `inconsistent`,
+  the widget/helper version mismatch prevents widget actions, and the complete
+  reviewed `setup.sh --rebaseline` command succeeds after updating the checkout.
+- With matching current versions, introduce policy drift again and confirm the
+  widget's **Review policy** button opens the read-only preflight before asking
+  for rebaseline confirmation.
+- Confirm cancellation makes no change and `--rebaseline` refuses both a fresh
+  installation and an already-consistent installation.
+- Confirm rebaseline refuses Secure Mode ON, structural damage, unsafe retained
+  grants, overridden restrictions, and a live-policy change after preflight.
+- Remove the test-owned sudo rule and confirm the resulting policy change is
+  detected and can be reviewed without leaving test policy behind.
 - Uninstall, verify Administrator Mode remains available, and confirm the
   plugin checkout and EscaLock system files are removed.
 - Reinstall from the public GitHub command and repeat one ON/OFF cycle.

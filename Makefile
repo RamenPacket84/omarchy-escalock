@@ -20,5 +20,4 @@ check: all
 	./tests/run.sh
 
 clean:
-	rm -f build/omarchy-escalock-helper build/omarchy-escalock-helper-test
-
+	rm -rf -- build

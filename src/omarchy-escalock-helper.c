@@ -60,7 +60,7 @@
 #define JQ "/usr/bin/jq"
 #define RULE_BASENAME "00-00-omarchy-escalock.rules"
 #define MAX_FILE_SIZE (1024U * 1024U)
-#define ESCALOCK_VERSION "2.0.7"
+#define ESCALOCK_VERSION "2.1.0"
 
 enum grant_mode {
     GRANT_DEDICATED,
@@ -81,6 +81,9 @@ struct blob {
 };
 
 static bool sudo_policy_matches(const struct config *cfg, const char *expected_path);
+static bool validate_sudo_file(const char *path);
+static bool actions_registered(void);
+static bool polkit_state_active(const struct config *cfg, bool administrator_enabled);
 
 enum mode_state {
     MODE_ENABLED,
@@ -109,7 +112,8 @@ static char path_share_rules_dir[PATH_MAX];
 static char path_policy_file[PATH_MAX];
 static char path_helper_file[PATH_MAX];
 
-_Noreturn static void fail(const char *fmt, ...)
+_Noreturn static void __attribute__((format(printf, 1, 2)))
+fail(const char *fmt, ...)
 {
     va_list ap;
 
@@ -1199,6 +1203,48 @@ static bool status_caller_is_valid(const struct config *cfg)
     return getuid() == 0 && parse_uid(pkexec_uid, &pk_uid) && pk_uid == cfg->uid;
 }
 
+static bool maintenance_caller_is_valid(const struct config *cfg)
+{
+#ifdef TESTING
+    const char *test = getenv("OMARCHY_ESCALOCK_TEST_MAINTENANCE");
+    if (test != NULL && strcmp(test, "1") == 0 && getuid() == cfg->uid)
+        return true;
+#endif
+    {
+        uid_t caller = (uid_t)-1;
+        const char *pkexec_uid = getenv("PKEXEC_UID");
+        return getuid() == 0 && geteuid() == 0 &&
+               parse_uid(pkexec_uid, &caller) && caller == cfg->uid;
+    }
+}
+
+/* Deliberately excludes the two effective-policy snapshots. This is the
+ * narrow root-only predicate used before an explicit snapshot rebaseline. */
+static bool structurally_enabled(const struct config *cfg)
+{
+    struct blob sudo_template = { 0 };
+    struct blob rule_on_template = { 0 };
+    bool good;
+
+    if (!infrastructure_files_good() || !wheel_grant_layout_good(cfg) ||
+        !load_file(path_sudo_template, 0440, &sudo_template) ||
+        !expected_sudo_template(cfg, &sudo_template) ||
+        !load_file(path_rule_on_template, 0644, &rule_on_template)) {
+        free_blob(&rule_on_template);
+        free_blob(&sudo_template);
+        return false;
+    }
+    good = file_equals_blob(cfg->grant_path, 0440, &sudo_template) &&
+           path_absent(path_sudo_disabled) &&
+           file_equals_blob(path_rule_file, 0644, &rule_on_template) &&
+           validate_sudo_file(path_sudo_template) &&
+           validate_sudo_file(path_sudoers_main) && actions_registered() &&
+           polkit_state_active(cfg, true);
+    free_blob(&rule_on_template);
+    free_blob(&sudo_template);
+    return good;
+}
+
 static void verify_disable_preflight(const struct config *cfg)
 {
     struct blob sudo_template;
@@ -1340,9 +1386,10 @@ int main(int argc, char **argv)
     openlog("omarchy-escalock", LOG_PID, LOG_AUTHPRIV);
     if (argc != 2 || (strcmp(argv[1], "version") != 0 &&
                       strcmp(argv[1], "status") != 0 &&
+                      strcmp(argv[1], "rebaseline-ready") != 0 &&
                       strcmp(argv[1], "enable") != 0 &&
                       strcmp(argv[1], "disable") != 0))
-        fail("usage: omarchy-escalock-helper {version|status|enable|disable}");
+        fail("usage: omarchy-escalock-helper {version|status|rebaseline-ready|enable|disable}");
     if (strcmp(argv[1], "version") == 0) {
         puts(ESCALOCK_VERSION);
         return 0;
@@ -1359,6 +1406,14 @@ int main(int argc, char **argv)
         if (!status_caller_is_valid(&cfg))
             fail("status is available only to the configured local user");
         puts(state_name(current_state(&cfg)));
+        return 0;
+    }
+    if (strcmp(argv[1], "rebaseline-ready") == 0) {
+        if (!maintenance_caller_is_valid(&cfg))
+            fail("rebaseline verification is restricted to root maintenance for the configured user");
+        if (!structurally_enabled(&cfg))
+            fail("Administrator Mode structure is not safe for policy rebaseline");
+        puts("enabled");
         return 0;
     }
     if (!mutation_caller_is_valid(&cfg))

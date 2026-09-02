@@ -14,6 +14,7 @@ readonly target_user=$(/usr/bin/id -un)
 enable_plugin=false
 check_only=false
 development=false
+rebaseline=false
 
 fail() {
   echo "setup.sh: $*" >&2
@@ -22,13 +23,15 @@ fail() {
 
 usage() {
   cat <<'USAGE'
-Usage: ./setup.sh [--enable] [--check] [--development]
+Usage: ./setup.sh [--enable] [--check] [--rebaseline] [--development]
 
 Builds and validates the exact local Git HEAD from the plugin checkout,
 performs an explicit privileged setup, and optionally enables the EscaLock
 widget.
 
 --check        Run the privileged preflight without installing system files.
+--rebaseline   After review, replace stale policy snapshots from a structurally
+               verified Administrator Mode ON state, then perform the upgrade.
 --development  Use the current working tree instead of Git HEAD. Never use this
                option for a published installation.
 USAGE
@@ -56,6 +59,10 @@ while (( $# > 0 )); do
       development=true
       shift
       ;;
+    --rebaseline)
+      rebaseline=true
+      shift
+      ;;
     -h | --help)
       usage
       exit 0
@@ -65,6 +72,9 @@ while (( $# > 0 )); do
       ;;
   esac
 done
+
+[[ $check_only == false || $rebaseline == false ]] ||
+  fail "--check and --rebaseline cannot be used together"
 
 (( EUID != 0 )) || fail "run setup as the target user, not with sudo"
 [[ $target_user =~ ^[a-z_][a-z0-9_-]*$ ]] || fail "invalid target username"
@@ -118,9 +128,11 @@ payload_files=(
   bin/omarchy-escalock
   bin/omarchy-escalock-maint-common
   bin/omarchy-escalock-maint-grant
+  bin/omarchy-escalock-maint-policy
   bin/omarchy-escalock-maint-transaction
   bin/omarchy-escalock-maint-preflight
   bin/omarchy-escalock-maint-install
+  bin/omarchy-escalock-maint-rebaseline
   bin/omarchy-escalock-maint-uninstall
   manifest.json
   polkit/00-00-omarchy-escalock-on.rules.in
@@ -150,12 +162,6 @@ sudo policy snapshots, and Polkit policy. Administrator Mode remains ON.
 Review this repository and preserve the recovery backup before continuing.
 EOF
 
-if [[ $check_only == false ]]; then
-  [[ -t 0 ]] || fail "interactive confirmation requires a terminal"
-  read -r -p "Type 'install' to continue: " confirmation
-  [[ $confirmation == install ]] || fail "setup canceled"
-fi
-
 readonly bootstrap='set -euo pipefail
 umask 077
 export LC_ALL=C
@@ -178,9 +184,11 @@ expected_members=(
   bin/omarchy-escalock
   bin/omarchy-escalock-maint-common
   bin/omarchy-escalock-maint-grant
+  bin/omarchy-escalock-maint-policy
   bin/omarchy-escalock-maint-transaction
   bin/omarchy-escalock-maint-preflight
   bin/omarchy-escalock-maint-install
+  bin/omarchy-escalock-maint-rebaseline
   bin/omarchy-escalock-maint-uninstall
   manifest.json
   polkit/00-00-omarchy-escalock-on.rules.in
@@ -216,16 +224,36 @@ case "$operation" in
     "$stage/payload/bin/omarchy-escalock-maint-install" \
       --stage "$stage/payload" --user "$target_user" --commit "$source_commit" --digest "$expected_digest"
     ;;
+  rebaseline)
+    "$stage/payload/bin/omarchy-escalock-maint-install" \
+      --stage "$stage/payload" --user "$target_user" --commit "$source_commit" --digest "$expected_digest" \
+      --rebaseline
+    ;;
   *)
     echo "EscaLock bootstrap received an invalid operation" >&2
     exit 2
     ;;
 esac'
 
-root_operation=install
-[[ $check_only == false ]] || root_operation=check
-/usr/bin/sudo -- /usr/bin/bash -c "$bootstrap" omarchy-escalock-bootstrap \
-  "$payload_archive" "$payload_digest" "$target_user" "$source_commit" "$root_operation"
+run_root_operation() {
+  /usr/bin/sudo -- /usr/bin/bash -c "$bootstrap" omarchy-escalock-bootstrap \
+    "$payload_archive" "$payload_digest" "$target_user" "$source_commit" "$1"
+}
+
+if [[ $check_only == true ]]; then
+  run_root_operation check
+else
+  [[ -t 0 ]] || fail "interactive confirmation requires a terminal"
+  if [[ $rebaseline == true ]]; then
+    echo "Policy rebaseline was requested. The privileged operation will list retained sudo rules,"
+    echo "verify the existing Administrator Mode structure, and ask for confirmation before changing snapshots."
+    run_root_operation rebaseline
+  else
+    read -r -p "Type 'install' to continue: " confirmation
+    [[ $confirmation == install ]] || fail "setup canceled"
+    run_root_operation install
+  fi
+fi
 
 if [[ $check_only == true ]]; then
   echo "EscaLock setup check completed without installing system files."

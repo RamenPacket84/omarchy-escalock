@@ -23,11 +23,13 @@ Panel {
   readonly property string helper: "/usr/local/libexec/omarchy-escalock-helper"
   readonly property string onboardingLauncher: Quickshell.env("HOME")
     + "/.config/omarchy/plugins/andrewbacon.escalock/bin/omarchy-escalock-onboard"
-  readonly property string expectedSystemVersion: "2.0.7"
+  readonly property string expectedSystemVersion: "2.1.0"
   readonly property string setupState: StateModel.setupState(versionChecked,
     helperPresent, installedSystemVersion, expectedSystemVersion)
   readonly property bool setupMissing: setupState === "missing"
   readonly property bool updateRequired: setupState === "update"
+  readonly property bool policyReviewRequired: setupState === "ready"
+    && adminState === "inconsistent"
   readonly property bool busy: helperProbe.running || versionProcess.running
     || statusProcess.running || transitionProcess.running || onboardingProcess.running
   readonly property string secureModeState: StateModel.secureState(adminState)
@@ -100,6 +102,15 @@ Panel {
     onboardingProcess.running = true
   }
 
+  function startPolicyReview() {
+    if (onboardingProcess.running || !policyReviewRequired) return
+    statusMessage = "Review the detected sudo policy change in the opened terminal. No snapshot will change without explicit confirmation."
+    statusError = false
+    close()
+    onboardingProcess.command = [onboardingLauncher, "--rebaseline"]
+    onboardingProcess.running = true
+  }
+
   function requestToggle() {
     if (busy) return
     if (setupMissing || updateRequired) {
@@ -133,7 +144,9 @@ Panel {
     if (exitCode === 0 && (value === "enabled" || value === "disabled" || value === "inconsistent")) {
       adminState = value
       if (!transitionProcess.running) {
-        statusMessage = StateModel.statusMessage(value)
+        statusMessage = value === "inconsistent"
+          ? "System sudo or Polkit policy changed. EscaLock made no transition; review the policy before authorizing a new baseline."
+          : StateModel.statusMessage(value)
         statusError = value === "inconsistent"
       }
     } else {
@@ -303,7 +316,8 @@ Panel {
           width: parent.width
           text: root.setupMissing ? "Finish EscaLock setup"
             : (root.updateRequired ? "EscaLock update required"
-              : StateModel.panelTitle(root.adminState))
+              : (root.policyReviewRequired ? "EscaLock policy review required"
+                : StateModel.panelTitle(root.adminState)))
           textFormat: Text.PlainText
           color: root.foreground
           font.family: root.fontFamily
@@ -341,11 +355,13 @@ Panel {
           Button {
             width: cancelButton.width
             text: root.setupMissing ? "Finish setup"
-              : (root.adminState === "enabled" && !root.updateRequired ? "Turn ON" : "Refresh")
+              : (root.policyReviewRequired ? "Review policy"
+                : (root.adminState === "enabled" && !root.updateRequired ? "Turn ON" : "Refresh"))
             enabled: !root.busy
             foreground: root.foreground
             onClicked: {
               if (root.setupMissing) root.startSetup(false)
+              else if (root.policyReviewRequired) root.startPolicyReview()
               else if (root.adminState === "enabled" && !root.updateRequired)
                 root.runTransition("disable")
               else root.recheck()

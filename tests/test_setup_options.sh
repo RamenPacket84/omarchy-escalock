@@ -4,10 +4,11 @@ set -euo pipefail
 
 project_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
 setup="$project_root/setup.sh"
+rebaseline="$project_root/bin/omarchy-escalock-maint-rebaseline"
 
 help_output=$("$setup" --help)
 /usr/bin/grep -Fqx \
-  'Usage: ./setup.sh [--enable] [--check] [--development]' \
+  'Usage: ./setup.sh [--enable] [--check] [--rebaseline] [--development]' \
   <<< "$help_output"
 
 for deprecated in --upgrade --dry-run --user; do
@@ -16,6 +17,13 @@ for deprecated in --upgrade --dry-run --user; do
     exit 1
   fi
 done
+
+if "$setup" --check --rebaseline >/dev/null 2>&1; then
+  echo "setup accepted mutually exclusive check and rebaseline modes" >&2
+  exit 1
+fi
+/usr/bin/grep -Fq "Type 'rebaseline' to authorize exactly this policy and continue" \
+  "$rebaseline"
 
 check_exit_line=$(/usr/bin/grep -nF \
   'EscaLock setup check completed without installing system files.' "$setup")
